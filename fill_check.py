@@ -4,7 +4,8 @@
 
 流程:
 1. 讀取「系統檢核問題追蹤.xlsx」的「可忽略事件ID」清單
-2. 讀取指定資料夾內所有 CSV，檔名 = [日期_]伺服器名（例: 20261015_P3-WFA-AP01V.csv）
+2. 讀取指定資料夾內的 CSV，檔名 = [日期_]伺服器名（例: 20261015_P3-WFA-AP01V.csv）
+   資料夾內有多個日期時，只處理日期最新的那一批
    只讀「錯誤」「警告」（以及「重大」，算錯誤）的事件，「資訊」等其他等級全部略過
 3. 檢核表（BOS_SystemCheck.xlsx）：到第一欄找到同名伺服器那一列
    - CSV 裡的 ID 全部都在可忽略清單 → 「警告」「錯誤」兩欄都寫 O
@@ -376,6 +377,12 @@ def main():
     if not csv_files:
         print(f"資料夾內沒有 CSV: {csv_dir}")
         return
+    # 資料夾會累積每週的 CSV，只處理日期最新的那一批（舊週的追蹤表資料不動）
+    latest = max(parse_filename(p)[1] for p in csv_files)
+    old = [p for p in csv_files if parse_filename(p)[1] != latest]
+    csv_files = [p for p in csv_files if parse_filename(p)[1] == latest]
+    print(f"處理 {latest:%Y%m%d}（{week_label(latest)}）的 CSV 共 {len(csv_files)} 個"
+          + (f"，較舊的 {len(old)} 個略過" if old else ""))
 
     check_wb = openpyxl.load_workbook(check_xlsx)
     check_ws = check_wb[CHECK_SHEET] if CHECK_SHEET else check_wb.worksheets[0]
@@ -430,11 +437,18 @@ class _Tee:
 
     def write(self, s):
         for st in self.streams:
-            st.write(s)
+            try:
+                st.write(s)
+            except (UnicodeEncodeError, OSError, ValueError):
+                # 畫面顯示不了的字（或視窗已關）不影響 log
+                pass
 
     def flush(self):
         for st in self.streams:
-            st.flush()
+            try:
+                st.flush()
+            except (OSError, ValueError):
+                pass
 
 
 def run():

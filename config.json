@@ -1,6 +1,6 @@
 {
     "paths": {
-        "csv_dir": "./csv",
+        "csv_dir": "D:/SystemCheck/EventLog",
         "check_xlsx": "BOS_系統穩定健檢狀態記錄表_W2642.xlsx",
         "track_xlsx": "系統檢核問題追蹤.xlsx"
     },
@@ -34,5 +34,6 @@
         },
         "ignore_header": "可忽略",
         "output": null
-    }
+    },
+    "log_dir": "D:/SystemCheck/logs"
 }

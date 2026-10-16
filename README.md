@@ -24,6 +24,27 @@
 pip install pandas openpyxl
 ```
 
+## 一鍵執行（撈 CSV + 填表）
+
+```
+D:\SystemCheck\
+├─ run_weekly.bat          ← 每週點這個
+├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
+├─ serverlist.txt          伺服器清單（一行一台）
+├─ fill_check.py / .exe    填檢核表、貼追蹤表
+├─ search_ignore.py / .exe 可忽略事件ID 搜尋
+├─ config.json
+├─ EventLog\               CSV 輸出（每週累積）
+└─ logs\                   執行紀錄（依日期命名）
+```
+
+`run_weekly.bat` 依序執行：
+1. `EventLogCheck.ps1`：讀 `serverlist.txt`，撈每台伺服器近 7 天的事件，輸出 `EventLog\20261016_伺服器名.csv`
+2. `fill_check.py`：讀 `EventLog\` 內**日期最新**的那批 CSV（舊週的 CSV 留著不處理），填檢核表 O/X、貼到追蹤表
+3. 結束後停在視窗，結果也記在 `logs\`
+
+也可以排進 Windows 工作排程器，每週固定時間執行 `run_weekly.bat`。
+
 ## 每週作業流程
 
 ### 1. 放入 CSV
