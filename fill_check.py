@@ -59,11 +59,14 @@ import pandas as pd
 import openpyxl
 
 # ===== 讀取設定檔 =====
-# 包成執行檔（PyInstaller）時，config.json 放在 exe 旁邊
-if getattr(sys, "frozen", False):
-    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+def _base_dir():
+    """程式所在資料夾；包成執行檔（PyInstaller）時是 exe 所在資料夾，config.json 放在旁邊"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+BASE_DIR = _base_dir()
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 

@@ -29,12 +29,15 @@ QUIT_CMDS = {"q", "quit", "exit", "離開"}
 RELOAD_CMDS = {"r", "reload"}
 FILE_CMDS = {"f", "file"}
 
+def _base_dir():
+    """程式所在資料夾；包成 exe 時是 exe 所在資料夾"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 # 記住上次的 Excel 路徑（放在程式旁邊）
-if getattr(sys, "frozen", False):
-    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LAST_PATH_FILE = os.path.join(BASE_DIR, "search_ignore_last.txt")
+LAST_PATH_FILE = os.path.join(_base_dir(), "search_ignore_last.txt")
 
 
 class Quit(Exception):
