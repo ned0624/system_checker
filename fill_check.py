@@ -5,11 +5,12 @@
 流程:
 1. 讀取「系統檢核問題追蹤.xlsx」的「可忽略事件ID」清單
 2. 讀取指定資料夾內所有 CSV，檔名 = [日期_]伺服器名（例: 20261015_P3-WFA-AP01V.csv）
+   只讀「錯誤」「警告」（以及「重大」，算錯誤）的事件，「資訊」等其他等級全部略過
 3. 檢核表（BOS_SystemCheck.xlsx）：到第一欄找到同名伺服器那一列
    - CSV 裡的 ID 全部都在可忽略清單 → 「警告」「錯誤」兩欄都寫 O
    - 有 ID 不在清單 → 依 CSV 的等級欄位（警告/錯誤）在對應欄打 X，
      另一欄若沒有問題則寫 O；不在清單的事件說明寫進「備註」
-4. 問題追蹤表（系統檢核問題追蹤.xlsx）：CSV 全部內容（含可忽略的事件）貼到最後面
+4. 問題追蹤表（系統檢核問題追蹤.xlsx）：CSV 的錯誤/警告事件（含可忽略的事件）貼到最後面
    - 第一欄：伺服器名
    - 第二欄：週別，依檔名日期算 ISO 週次，格式 W+年後兩碼+週次（20261015 → W2642）
              檔名沒有日期時用今天日期
@@ -63,9 +64,11 @@ def _path(p):
 with open(CONFIG_PATH, encoding="utf-8-sig") as f:
     _cfg = json.load(f)
 
-CSV_DIR    = _path(_cfg["paths"]["csv_dir"])
-CHECK_XLSX = _path(_cfg["paths"]["check_xlsx"])
-TRACK_XLSX = _path(_cfg["paths"]["track_xlsx"])
+# 舊版設定檔沒有 paths 區段時，沿用 csv.dir / check_sheet.xlsx / track.xlsx
+_paths = _cfg.get("paths", {})
+CSV_DIR    = _path(_paths.get("csv_dir") or _cfg["csv"].get("dir"))
+CHECK_XLSX = _path(_paths.get("check_xlsx") or _cfg["check_sheet"].get("xlsx"))
+TRACK_XLSX = _path(_paths.get("track_xlsx") or _cfg["track"].get("xlsx"))
 
 IGNORE_XLSX   = TRACK_XLSX
 IGNORE_SHEET  = _cfg["ignore_list"]["sheet"]
@@ -87,6 +90,28 @@ HOST_HEADER  = _cfg["track"]["host_header"]
 WEEK_HEADER  = _cfg["track"]["week_header"]
 TRACK_OUTPUT = _path(_cfg["track"]["output"])
 # ======================
+
+# 事件等級（CSV 等級欄位的值，不分大小寫）；不在這兩組的等級（例: 資訊）一律不讀
+ERROR_LEVELS = {"錯誤", "重大", "error", "critical"}
+WARN_LEVELS  = {"警告", "warning"}
+
+
+def level_kind(level):
+    """回傳 "error" / "warn" / None（資訊等其他等級）"""
+    lv = str(level).strip().lower() if pd.notna(level) else ""
+    if lv in ERROR_LEVELS:
+        return "error"
+    if lv in WARN_LEVELS:
+        return "warn"
+    return None
+
+
+def keep_warn_error(df):
+    """只留下錯誤/警告的列，回傳 (過濾後的 df, 略過筆數)"""
+    if CSV_LEVEL_COLUMN not in df.columns:
+        raise KeyError(f"找不到欄位「{CSV_LEVEL_COLUMN}」，現有欄位: {list(df.columns)}")
+    mask = df[CSV_LEVEL_COLUMN].map(level_kind).notna()
+    return df[mask].reset_index(drop=True), int((~mask).sum())
 
 
 def norm(v):
@@ -152,7 +177,7 @@ def find_host_rows(ws):
 
 
 def check_csv(df, ignore_ids):
-    """回傳 (有警告, 有錯誤, 備註文字)；只計算不在可忽略清單的事件"""
+    """回傳 (有警告, 有錯誤, 備註文字)；df 已只含錯誤/警告，只計算不在可忽略清單的事件"""
     for col in (CSV_ID_COLUMN, CSV_LEVEL_COLUMN, CSV_DESC_COLUMN):
         if col not in df.columns:
             raise KeyError(f"找不到欄位「{col}」，現有欄位: {list(df.columns)}")
@@ -166,12 +191,10 @@ def check_csv(df, ignore_ids):
             continue
         level = str(row[CSV_LEVEL_COLUMN]).strip() if pd.notna(row[CSV_LEVEL_COLUMN]) else ""
         desc = str(row[CSV_DESC_COLUMN]).strip() if pd.notna(row[CSV_DESC_COLUMN]) else ""
-        if "錯誤" in level or level.lower() == "error":
+        if level_kind(level) == "error":
             has_error = True
-        elif "警告" in level or level.lower() == "warning":
-            has_warn = True
         else:
-            print(f"  [注意] ID {eid} 等級「{level}」無法辨識，未計入警告/錯誤")
+            has_warn = True
         key = (level, eid, desc)
         if key not in seen:  # 同一事件重複出現只記一次
             seen.add(key)
@@ -311,10 +334,11 @@ def main():
         host, d = parse_filename(path)
         print(host)
         try:
-            df = read_csv_any(path)
+            df, skipped = keep_warn_error(read_csv_any(path))
         except Exception as e:
             print(f"  [錯誤] {e}")
             continue
+        print(f"  錯誤/警告 {len(df)} 筆" + (f"，略過資訊等其他等級 {skipped} 筆" if skipped else ""))
 
         r = host_rows.get(host.upper())
         if r is None:
