@@ -41,7 +41,7 @@
     track.columns                             追蹤表標題 → CSV 欄位名稱
     track.ignore_header                       可忽略欄的標題，null = 不填
     track.output                              另存路徑，null = 直接覆寫追蹤表
-    log_dir                                   log 資料夾，省略 = logs（每次執行產生一個 fill_check_日期_時間.log）
+    log_dir                                   log 資料夾，省略 = logs（依日期命名，例: 20261016.log；同一天多次執行附加在同一檔）
     路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
     JSON 裡的反斜線要寫兩次（\\），或改用正斜線 /
     相對路徑以 config.json 所在資料夾為基準
@@ -79,9 +79,9 @@ except Exception as _e:
     _msg = f"[錯誤] 無法讀取設定檔 {CONFIG_PATH}：{type(_e).__name__}: {_e}"
     print(_msg)
     os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
-    with open(os.path.join(BASE_DIR, "logs", f"fill_check_{datetime.now():%Y%m%d_%H%M%S}.log"),
-              "w", encoding="utf-8-sig") as _f:
-        _f.write(_msg + "\n\n" + traceback.format_exc())
+    with open(os.path.join(BASE_DIR, "logs", f"{datetime.now():%Y%m%d}.log"),
+              "a", encoding="utf-8") as _f:
+        _f.write(f"\n===== {datetime.now():%Y-%m-%d %H:%M:%S} =====\n" + _msg + "\n\n" + traceback.format_exc())
     sys.exit(1)
 
 # 舊版設定檔沒有 paths 區段時，沿用 csv.dir / check_sheet.xlsx / track.xlsx
@@ -440,13 +440,16 @@ class _Tee:
 def run():
     """執行 main，畫面輸出全部寫進 log；未預期的錯誤只在畫面顯示一行，完整錯誤內容記在 log"""
     os.makedirs(LOG_DIR, exist_ok=True)
-    log_path = os.path.join(LOG_DIR, f"fill_check_{datetime.now():%Y%m%d_%H%M%S}.log")
+    log_path = os.path.join(LOG_DIR, f"{datetime.now():%Y%m%d}.log")
     console = sys.stdout
     code = 0
-    with open(log_path, "w", encoding="utf-8-sig") as log:
+    # 同一天執行多次都附加在同一個 log 檔
+    # 新檔才寫 BOM，舊版記事本開啟中文才不會亂碼
+    enc = "utf-8" if os.path.exists(log_path) else "utf-8-sig"
+    with open(log_path, "a", encoding=enc) as log:
         sys.stdout = _Tee(console, log)
         try:
-            print(f"開始執行 {datetime.now():%Y-%m-%d %H:%M:%S}")
+            print(f"\n===== 開始執行 {datetime.now():%Y-%m-%d %H:%M:%S} =====")
             main()
         except SystemExit as e:
             code = e.code or 0
