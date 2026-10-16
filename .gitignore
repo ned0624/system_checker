@@ -4,3 +4,4 @@ dist/
 __pycache__/
 email_body.txt
 logs/
+search_ignore_last.txt
