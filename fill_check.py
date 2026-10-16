@@ -41,6 +41,7 @@
     track.columns                             追蹤表標題 → CSV 欄位名稱
     track.ignore_header                       可忽略欄的標題，null = 不填
     track.output                              另存路徑，null = 直接覆寫追蹤表
+    log_dir                                   log 資料夾，省略 = logs（每次執行產生一個 fill_check_日期_時間.log）
     路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
     JSON 裡的反斜線要寫兩次（\\），或改用正斜線 /
     相對路徑以 config.json 所在資料夾為基準
@@ -50,6 +51,7 @@ import glob
 import json
 import os
 import re
+import traceback
 from datetime import date, datetime
 import pandas as pd
 import openpyxl
@@ -67,8 +69,20 @@ def _path(p):
     return os.path.join(BASE_DIR, p) if p else p
 
 
-with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-    _cfg = json.load(f)
+try:
+    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+        _cfg = json.load(f)
+except Exception as _e:
+    if __name__ != "__main__":
+        raise
+    # 設定檔讀不到時還不知道 log_dir，log 寫在預設的 logs 資料夾
+    _msg = f"[錯誤] 無法讀取設定檔 {CONFIG_PATH}：{type(_e).__name__}: {_e}"
+    print(_msg)
+    os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
+    with open(os.path.join(BASE_DIR, "logs", f"fill_check_{datetime.now():%Y%m%d_%H%M%S}.log"),
+              "w", encoding="utf-8-sig") as _f:
+        _f.write(_msg + "\n\n" + traceback.format_exc())
+    sys.exit(1)
 
 # 舊版設定檔沒有 paths 區段時，沿用 csv.dir / check_sheet.xlsx / track.xlsx
 _paths = _cfg.get("paths", {})
@@ -102,6 +116,8 @@ IGNORE_HEADER    = _cfg["track"].get("ignore_header", "可忽略")
 # 追蹤表中放事件 ID 的欄（可忽略公式用）
 TRACK_ID_HEADER  = next((h for h, c in TRACK_COLUMNS.items() if c == CSV_ID_COLUMN), None)
 TRACK_OUTPUT = _path(_cfg["track"]["output"])
+
+LOG_DIR = _path(_cfg.get("log_dir") or "logs")
 # ======================
 
 # 事件等級（CSV 等級欄位的值，不分大小寫）；不在這兩組的等級（例: 資訊）一律不讀
@@ -370,24 +386,29 @@ def main():
     track_ws = get_track_sheet(track_wb)
     track_cols, ignore_col = track_columns(track_ws)
 
+    problems = []  # (檔名, 狀況) 最後彙總
     for path in csv_files:
         host, d = parse_filename(path)
+        fname = os.path.basename(path)
         print(host)
         try:
             df, skipped = keep_warn_error(read_csv_any(path))
         except Exception as e:
             print(f"  [錯誤] {e}")
+            problems.append((fname, f"錯誤：CSV 無法讀取，整個略過（{e}）"))
             continue
         print(f"  錯誤/警告 {len(df)} 筆" + (f"，略過資訊等其他等級 {skipped} 筆" if skipped else ""))
 
         r = host_rows.get(host.upper())
         if r is None:
             print("  [略過] 檢核表第一欄找不到此伺服器")
+            problems.append((fname, "略過：檢核表找不到此伺服器，未填 O/X（追蹤表照貼）"))
         else:
             try:
                 fill_check_row(check_ws, cols, r, df, ignore_ids, host)
             except Exception as e:
                 print(f"  [錯誤] 檢核表: {e}")
+                problems.append((fname, f"錯誤：未填 O/X（{e}）"))
 
         paste_csv(track_ws, track_cols, df, host, week_label(d))
 
@@ -397,6 +418,47 @@ def main():
     save(check_wb, check_output)
     save(track_wb, track_output)
 
+    print(f"\n===== 完成：CSV 共 {len(csv_files)} 個，有狀況 {len(problems)} 個 =====")
+    for fname, msg in problems:
+        print(f"  {fname}: {msg}")
+
+
+class _Tee:
+    """畫面輸出同時寫進 log 檔"""
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, s):
+        for st in self.streams:
+            st.write(s)
+
+    def flush(self):
+        for st in self.streams:
+            st.flush()
+
+
+def run():
+    """執行 main，畫面輸出全部寫進 log；未預期的錯誤只在畫面顯示一行，完整錯誤內容記在 log"""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_path = os.path.join(LOG_DIR, f"fill_check_{datetime.now():%Y%m%d_%H%M%S}.log")
+    console = sys.stdout
+    code = 0
+    with open(log_path, "w", encoding="utf-8-sig") as log:
+        sys.stdout = _Tee(console, log)
+        try:
+            print(f"開始執行 {datetime.now():%Y-%m-%d %H:%M:%S}")
+            main()
+        except SystemExit as e:
+            code = e.code or 0
+        except Exception as e:
+            code = 1
+            print(f"[錯誤] 程式中止，Excel 未存檔：{type(e).__name__}: {e}")
+            log.write("\n" + traceback.format_exc())
+        finally:
+            print(f"結束 {datetime.now():%Y-%m-%d %H:%M:%S}，log: {log_path}")
+            sys.stdout = console
+    sys.exit(code)
+
 
 if __name__ == "__main__":
-    main()
+    run()
