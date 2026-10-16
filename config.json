@@ -1,30 +1,38 @@
 {
     "paths": {
         "csv_dir": "./csv",
-        "check_xlsx": "BOS_SystemCheck.xlsx",
+        "check_xlsx": "BOS_系統穩定健檢狀態記錄表_W2642.xlsx",
         "track_xlsx": "系統檢核問題追蹤.xlsx"
     },
     "ignore_list": {
         "sheet": "可忽略事件ID",
-        "id_column": "ID"
+        "id_column": "可忽略事件ID"
     },
     "csv": {
-        "id_column": "ID",
-        "level_column": "事件分類",
-        "desc_column": "事件說明"
+        "id_column": "Id",
+        "level_column": "LevelDisplayName",
+        "desc_column": "Message"
     },
     "check_sheet": {
         "sheet": null,
         "header_row": 1,
-        "warn_header": "警告",
-        "error_header": "錯誤",
+        "warn_header": "事件檢視器\n警告事件",
+        "error_header": "事件檢視器\n系統錯誤",
         "note_header": "備註",
         "output": null
     },
     "track": {
-        "sheet": "檢核紀錄",
-        "host_header": "伺服器",
-        "week_header": "週別",
+        "sheet": "事件檢視器_BOS",
+        "header_row": 1,
+        "host_header": "Server Name",
+        "week_header": "周",
+        "columns": {
+            "錯誤/警告": "LevelDisplayName",
+            "事件識別碼": "Id",
+            "記錄檔名稱": "LogName",
+            "事件內容": "Message"
+        },
+        "ignore_header": "可忽略",
         "output": null
     }
 }

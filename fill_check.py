@@ -10,11 +10,14 @@
    - CSV 裡的 ID 全部都在可忽略清單 → 「警告」「錯誤」兩欄都寫 O
    - 有 ID 不在清單 → 依 CSV 的等級欄位（警告/錯誤）在對應欄打 X，
      另一欄若沒有問題則寫 O；不在清單的事件說明寫進「備註」
-4. 問題追蹤表（系統檢核問題追蹤.xlsx）：CSV 的錯誤/警告事件（含可忽略的事件）貼到最後面
-   - 第一欄：伺服器名
-   - 第二欄：週別，依檔名日期算 ISO 週次，格式 W+年後兩碼+週次（20261015 → W2642）
-             檔名沒有日期時用今天日期
-   - 第三欄起：CSV 內容（依標題對應欄位，表中沒有的標題會自動新增在最右邊）
+4. 問題追蹤表（系統檢核問題追蹤.xlsx）：CSV 的錯誤/警告事件（含可忽略的事件）接在最後一筆資料下面
+   依標題找欄位（工作表要先有標題列）：
+   - Server Name：檔名中的伺服器名
+   - 周：依檔名日期算 ISO 週次，格式 W+年後兩碼+週次（20261015 → W2642）；檔名沒有日期時用今天
+   - 錯誤/警告、事件識別碼、記錄檔名稱、事件內容：依 track.columns 對應 CSV 欄位
+     （預設 LevelDisplayName / Id / LogName / Message）
+   - 可忽略：填入 COUNTIF 公式，事件識別碼在「可忽略事件ID」清單就顯示 V
+   - 可能造成的影響、Action 等其他欄不動
    - 同一台伺服器、同一週別的舊資料會先刪除再貼上，重跑不會重複
 
 需求套件: pip install pandas openpyxl
@@ -32,8 +35,11 @@
     check_sheet.header_row                    標題列在第幾列
     check_sheet.warn/error/note_header        警告、錯誤、備註欄的標題
     check_sheet.output                        另存路徑，null = 直接覆寫檢核表
-    track.sheet                               工作表名稱，不存在會自動建立；null = 第一個工作表
-    track.host_header / week_header           第一欄、第二欄的標題
+    track.sheet                               工作表名稱；null = 第一個工作表
+    track.header_row                          標題列在第幾列
+    track.host_header / week_header           伺服器、週別欄的標題
+    track.columns                             追蹤表標題 → CSV 欄位名稱
+    track.ignore_header                       可忽略欄的標題，null = 不填
     track.output                              另存路徑，null = 直接覆寫追蹤表
     路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
     JSON 裡的反斜線要寫兩次（\\），或改用正斜線 /
@@ -85,9 +91,16 @@ ERROR_HEADER = _cfg["check_sheet"]["error_header"]
 NOTE_HEADER  = _cfg["check_sheet"]["note_header"]
 OUTPUT_XLSX  = _path(_cfg["check_sheet"]["output"])
 
-TRACK_SHEET  = _cfg["track"]["sheet"]
-HOST_HEADER  = _cfg["track"]["host_header"]
-WEEK_HEADER  = _cfg["track"]["week_header"]
+TRACK_SHEET      = _cfg["track"]["sheet"]
+TRACK_HEADER_ROW = _cfg["track"].get("header_row", 1)
+HOST_HEADER      = _cfg["track"]["host_header"]
+WEEK_HEADER      = _cfg["track"]["week_header"]
+TRACK_COLUMNS    = _cfg["track"].get("columns") or {
+    "錯誤/警告": CSV_LEVEL_COLUMN, "事件識別碼": CSV_ID_COLUMN,
+    "記錄檔名稱": "LogName", "事件內容": CSV_DESC_COLUMN}
+IGNORE_HEADER    = _cfg["track"].get("ignore_header", "可忽略")
+# 追蹤表中放事件 ID 的欄（可忽略公式用）
+TRACK_ID_HEADER  = next((h for h, c in TRACK_COLUMNS.items() if c == CSV_ID_COLUMN), None)
 TRACK_OUTPUT = _path(_cfg["track"]["output"])
 # ======================
 
@@ -237,58 +250,84 @@ def week_label(d):
 def get_track_sheet(wb):
     if not TRACK_SHEET:
         return wb.worksheets[0]
-    if TRACK_SHEET in wb.sheetnames:
-        return wb[TRACK_SHEET]
-    return wb.create_sheet(TRACK_SHEET)
+    if TRACK_SHEET not in wb.sheetnames:
+        raise KeyError(f"追蹤表找不到工作表「{TRACK_SHEET}」，現有工作表: {wb.sheetnames}")
+    return wb[TRACK_SHEET]
 
 
-def ensure_headers(ws, csv_columns):
-    """確保第一列有 伺服器/週別/CSV 欄位標題，回傳 標題 → 欄號"""
-    if ws.max_row == 1 and ws.cell(row=1, column=1).value is None:
-        ws.cell(row=1, column=1).value = HOST_HEADER
-        ws.cell(row=1, column=2).value = WEEK_HEADER
-    headers = {str(c.value).strip(): c.column for c in ws[1] if c.value is not None}
-    next_col = max(headers.values(), default=0) + 1
-    for col in csv_columns:
-        if col not in headers:
-            ws.cell(row=1, column=next_col).value = col
-            headers[col] = next_col
-            next_col += 1
-    return headers
+def track_columns(ws):
+    """依標題找出追蹤表各欄欄號：伺服器、週別、CSV 對應欄、可忽略欄（可省略）"""
+    headers = {re.sub(r"\s+", "", str(c.value)): c.column
+               for c in ws[TRACK_HEADER_ROW] if c.value is not None}
+    need = [HOST_HEADER, WEEK_HEADER] + list(TRACK_COLUMNS)
+    missing = [h for h in need if re.sub(r"\s+", "", h) not in headers]
+    if missing:
+        raise KeyError(f"追蹤表找不到標題 {missing}，現有標題: {list(headers)}")
+    cols = {h: headers[re.sub(r"\s+", "", h)] for h in need}
+    ignore_col = headers.get(re.sub(r"\s+", "", IGNORE_HEADER)) if IGNORE_HEADER else None
+    return cols, ignore_col
 
 
-def delete_existing(ws, host, week):
+def delete_existing(ws, cols, host, week):
     """刪除同一伺服器、同一週別的舊資料（由下往上刪才不會錯位）"""
     removed = 0
-    for r in range(ws.max_row, 1, -1):
-        h = ws.cell(row=r, column=1).value
-        w = ws.cell(row=r, column=2).value
+    for r in range(ws.max_row, TRACK_HEADER_ROW, -1):
+        h = ws.cell(row=r, column=cols[HOST_HEADER]).value
+        w = ws.cell(row=r, column=cols[WEEK_HEADER]).value
         if h is not None and str(h).strip().upper() == host.upper() and str(w).strip() == week:
             ws.delete_rows(r)
             removed += 1
     return removed
 
 
-def last_data_row(ws):
-    """最後一列有資料的列號（避免 max_row 被空白格式列撐大）"""
-    for r in range(ws.max_row, 0, -1):
-        if any(c.value is not None for c in ws[r]):
+def last_data_row(ws, cols):
+    """伺服器欄最後一個有值的列號（可忽略欄預先拉好的公式不算資料）"""
+    for r in range(ws.max_row, TRACK_HEADER_ROW, -1):
+        if ws.cell(row=r, column=cols[HOST_HEADER]).value not in (None, ""):
             return r
-    return 0
+    return TRACK_HEADER_ROW
 
 
-def paste_csv(ws, df, host, week):
-    headers = ensure_headers(ws, list(df.columns))
-    removed = delete_existing(ws, host, week)
-    r = last_data_row(ws) + 1
+def cell_value(v):
+    """CSV 值轉成儲存格值；純數字（例: 事件 Id）存成數字，避免 Excel 顯示「以文字儲存的數字」"""
+    if pd.isna(v):
+        return None
+    s = str(v)
+    return int(s) if s.strip().isdigit() and len(s.strip()) < 15 else s
+
+
+def paste_csv(ws, cols, df, host, week):
+    removed = delete_existing(ws, cols, host, week)
+    r = last_data_row(ws, cols) + 1
     for _, row in df.iterrows():
-        ws.cell(row=r, column=1).value = host
-        ws.cell(row=r, column=2).value = week
-        for col in df.columns:
-            v = row[col]
-            ws.cell(row=r, column=headers[col]).value = None if pd.isna(v) else v
+        ws.cell(row=r, column=cols[HOST_HEADER]).value = host
+        ws.cell(row=r, column=cols[WEEK_HEADER]).value = week
+        for header, csv_col in TRACK_COLUMNS.items():
+            ws.cell(row=r, column=cols[header]).value = cell_value(row[csv_col]) if csv_col in df.columns else None
         r += 1
     print(f"  追蹤表: {week} 貼上 {len(df)} 筆" + (f"（取代舊資料 {removed} 筆）" if removed else ""))
+
+
+def fill_ignore_marks(ws, cols, ignore_col, ignore_ids):
+    """可忽略欄：每筆資料填公式（追蹤表含可忽略清單時）或直接填 V；刪列後也一併校正"""
+    if not ignore_col:
+        return
+    id_col = cols[TRACK_ID_HEADER]
+    id_letter = openpyxl.utils.get_column_letter(id_col)
+    src = None
+    wb = ws.parent
+    if IGNORE_SHEET in wb.sheetnames:
+        ign = wb[IGNORE_SHEET]
+        for c in ign[1]:
+            if c.value is not None and str(c.value).strip() == IGNORE_COLUMN:
+                L = openpyxl.utils.get_column_letter(c.column)
+                src = f"'{IGNORE_SHEET}'!${L}$2:${L}$25555"
+    for r in range(TRACK_HEADER_ROW + 1, last_data_row(ws, cols) + 1):
+        cell = ws.cell(row=r, column=ignore_col)
+        if src:
+            cell.value = f'=IF(COUNTIF({src},"="&{id_letter}{r})>0,"V","")'
+        else:
+            cell.value = "V" if norm(ws.cell(row=r, column=id_col).value) in ignore_ids else None
 
 
 # ---------- 主程式 ----------
@@ -329,6 +368,7 @@ def main():
 
     track_wb = openpyxl.load_workbook(track_xlsx)
     track_ws = get_track_sheet(track_wb)
+    track_cols, ignore_col = track_columns(track_ws)
 
     for path in csv_files:
         host, d = parse_filename(path)
@@ -349,7 +389,10 @@ def main():
             except Exception as e:
                 print(f"  [錯誤] 檢核表: {e}")
 
-        paste_csv(track_ws, df, host, week_label(d))
+        paste_csv(track_ws, track_cols, df, host, week_label(d))
+
+    if TRACK_ID_HEADER:
+        fill_ignore_marks(track_ws, track_cols, ignore_col, ignore_ids)
 
     save(check_wb, check_output)
     save(track_wb, track_output)
