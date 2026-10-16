@@ -16,12 +16,12 @@ if not exist "%BASE%\EventLog\%TODAY%_*.csv" (
 
 echo [2/2] 填寫檢核表與追蹤表...
 REM 有 fill_check.exe 就用 exe，沒有就用 Python 執行 fill_check.py
-if exist "%BASE%\fill_check.exe" (
-    "%BASE%\fill_check.exe"
+if exist "%BASE%\fill_check\fill_check.exe" (
+    "%BASE%\fill_check\fill_check.exe"
 ) else (
     where python >nul 2>nul
     if errorlevel 1 (
-        echo [錯誤] 找不到 %BASE%\fill_check.exe，這台電腦也沒有安裝 Python
+        echo [錯誤] 找不到 %BASE%\fill_check\fill_check.exe，這台電腦也沒有安裝 Python
         goto END
     )
     python "%BASE%\fill_check.py"

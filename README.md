@@ -31,7 +31,7 @@ D:\SystemCheck\
 ├─ run_weekly.bat          ← 每週點這個
 ├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
 ├─ serverlist.txt          伺服器清單（一行一台）
-├─ fill_check.py / .exe    填檢核表、貼追蹤表
+├─ fill_check.py          填檢核表、貼追蹤表（或 fill_check\ 資料夾內的 exe）
 ├─ search_ignore.py / .exe 可忽略事件ID 搜尋
 ├─ config.json
 ├─ EventLog\               CSV 輸出（每週累積）
@@ -228,9 +228,21 @@ ID> 200,1801
 ## 打包成執行檔（Windows）
 
 ```
-pip install pyinstaller
-pyinstaller --onefile search_ignore.py
-pyinstaller --onefile fill_check.py
+pip install pyinstaller pandas openpyxl
+build_exe.bat
 ```
 
-產出在 `dist\`。exe 旁邊放 `config.json`；Excel 與 CSV 資料夾放在 `paths` 設定的位置（用相對路徑時就放在 exe 旁邊）。
+| 程式 | 打包方式 | 產出 | 說明 |
+|---|---|---|---|
+| search_ignore | `--onefile`，排除 pandas/numpy/PIL/lxml | `dist\search_ignore.exe`（約 10 MB） | 單一檔案，複製到哪都能用 |
+| fill_check | `--onedir` | `dist\fill_check\` 資料夾 | 整個資料夾一起複製，`config.json` 放在 `fill_check.exe` 旁邊 |
+
+**為什麼不全部用 `--onefile`？** `--onefile` 每次啟動都要把整包程式解壓縮到暫存資料夾，
+公司防毒會逐一掃描解出來的檔案；含 pandas 的程式可能要等好幾分鐘才出現第一行文字。
+`--onedir` 不用解壓縮，啟動快很多。
+
+啟動仍然很慢時：
+- exe 放在網路磁碟（例如 P:）會更慢，請複製到本機（例如 D:\SystemCheck）執行
+- 請 IT 把 exe 所在資料夾加入防毒的排除清單
+
+`run_weekly.bat` 會先找 `D:\SystemCheck\fill_check\fill_check.exe`（把 `dist\fill_check\` 整個資料夾複製到 `D:\SystemCheck\fill_check\`），找不到才用 Python 執行 `fill_check.py`。

@@ -14,14 +14,13 @@
 清單位置: 工作表「可忽略事件ID」（找不到時列出工作表讓你選），
           ID 欄依標題「可忽略事件ID」或「ID」尋找，都沒有時用第一欄
 
-需求套件: pip install pandas openpyxl
-打包: pip install pyinstaller
-      pyinstaller --onefile search_ignore.py
+需求套件: pip install openpyxl（不用 pandas，打包後的 exe 小、啟動快）
+打包: 執行 build_exe.bat（排除用不到的 pandas/numpy/PIL/lxml，exe 小、啟動快）
 """
 import os
 import re
 import sys
-import pandas as pd
+import openpyxl
 
 DEFAULT_SHEET = "可忽略事件ID"
 ID_HEADERS = ("可忽略事件ID", "ID", "Id", "事件識別碼")
@@ -55,9 +54,13 @@ def ask(prompt):
     return text
 
 
+def is_blank(v):
+    return v is None or str(v).strip() == ""
+
+
 def norm(v):
     """統一 ID 格式：去空白、去掉 Excel 讀成 float 的 .0"""
-    if pd.isna(v):
+    if is_blank(v):
         return None
     s = str(v).strip()
     if s.endswith(".0") and s[:-2].isdigit():
@@ -97,7 +100,9 @@ def ask_excel():
 
 
 def pick_sheet(path):
-    sheets = pd.ExcelFile(path).sheet_names
+    wb = openpyxl.load_workbook(path, read_only=True)
+    sheets = wb.sheetnames
+    wb.close()
     if DEFAULT_SHEET in sheets:
         return DEFAULT_SHEET
     print(f"找不到工作表「{DEFAULT_SHEET}」，請選擇：")
@@ -111,21 +116,31 @@ def pick_sheet(path):
 
 def load_ignore_table(path, sheet):
     """回傳 ID → 該列其他欄位的說明文字（一格多個 ID 時每個 ID 都對應同一列）"""
-    df = pd.read_excel(path, sheet_name=sheet, dtype=str)
-    df.columns = [str(c).strip() for c in df.columns]
-    id_col = next((h for h in ID_HEADERS if h in df.columns), df.columns[0])
-    others = [c for c in df.columns if c != id_col and not c.startswith("Unnamed")]
-    table = {}
-    for idx, row in df.iterrows():
-        v = row[id_col]
-        if pd.isna(v):
-            continue
-        info = "  ".join(f"{c}: {str(row[c]).strip()}" for c in others if pd.notna(row[c]))
-        info = f"第 {idx + 2} 列" + (f"  {info}" if info else "")
-        for part in str(v).replace("\n", ",").replace("、", ",").split(","):
-            n = norm(part)
-            if n:
-                table.setdefault(n, []).append(info)
+    # read_only + data_only：只讀值（公式取計算結果），大檔也快
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows = wb[sheet].iter_rows(values_only=True)
+        header = next(rows, ())
+        headers = [None if is_blank(h) else str(h).strip() for h in header]
+        names = [h for h in headers if h]
+        id_name = next((h for h in ID_HEADERS if h in names), None)
+        id_idx = headers.index(id_name) if id_name else 0
+        id_col = id_name or "第一欄"
+        others = [(i, h) for i, h in enumerate(headers) if h and i != id_idx]
+        table = {}
+        for rownum, row in enumerate(rows, start=2):
+            v = row[id_idx] if id_idx < len(row) else None
+            if is_blank(v):
+                continue
+            info = "  ".join(f"{h}: {str(row[i]).strip()}" for i, h in others
+                             if i < len(row) and not is_blank(row[i]))
+            info = f"第 {rownum} 列" + (f"  {info}" if info else "")
+            for part in str(v).replace("\n", ",").replace("、", ",").split(","):
+                n = norm(part)
+                if n:
+                    table.setdefault(n, []).append(info)
+    finally:
+        wb.close()
     print(f"已載入可忽略事件ID 共 {len(table)} 筆（{os.path.basename(path)} / {sheet} / 欄位: {id_col}）")
     return table
 

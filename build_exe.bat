@@ -1,0 +1,14 @@
+@echo off
+REM 打包成 exe（需先 pip install pyinstaller pandas openpyxl）
+REM 產出在 dist\ 資料夾
+cd /d "%~dp0"
+
+REM 搜尋工具：只用 openpyxl，排除用不到的大型套件，exe 小、啟動快
+pyinstaller --onefile --exclude-module pandas --exclude-module numpy --exclude-module PIL --exclude-module lxml search_ignore.py
+
+REM 填表程式：需要 pandas，用 --onedir 不必每次啟動都解壓縮
+REM 產出 dist\fill_check\ 資料夾，整個資料夾一起複製，執行裡面的 fill_check.exe
+REM config.json 要放在 dist\fill_check\ 裡，跟 fill_check.exe 同一層
+pyinstaller --onedir --noconfirm --exclude-module PIL --exclude-module lxml fill_check.py
+
+pause
