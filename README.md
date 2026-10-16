@@ -225,6 +225,20 @@ ID> 200,1801
 
 > 注意：`track.sheet` 不要設成「可忽略事件ID」，否則貼上的 ID 下次都會被當成可忽略。
 
+## 下載執行檔
+
+到 [Releases](https://github.com/ned0624/system_checker/releases/latest) 下載（程式一更新推到 master，GitHub Actions 會自動在 Windows 上重新打包並發布新版本）：
+
+| 檔案 | 內容 |
+|---|---|
+| `SystemCheck.zip` | 解壓到 `D:\` 會得到 `D:\SystemCheck\`：`fill_check\`（含 `fill_check.exe`、`config.json`）、`search_ignore.exe`、`run_weekly.bat`、`EventLogCheck.ps1`、空的 `EventLog\`、`logs\` |
+| `search_ignore.exe` | 只要搜尋工具時單獨下載 |
+
+使用前：
+1. 修改 `D:\SystemCheck\fill_check\config.json` 的 `paths`（CSV、檢核表、追蹤表位置）
+2. 準備 `D:\SystemCheck\serverlist.txt`（一行一台伺服器）
+3. 雙擊 `run_weekly.bat`
+
 ## 打包成執行檔（Windows）
 
 ```
