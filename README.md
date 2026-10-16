@@ -49,8 +49,10 @@ pip install pandas openpyxl
 
 ```
 python fill_check.py
-python fill_check.py <csv資料夾> <檢核表xlsx>   # 指定其他路徑
+python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時指定其他路徑
 ```
+
+三個路徑平常設定在 config.json 的 `paths`（見下方「設定檔」）。路徑不存在時程式會直接提示並停止。
 
 ### 4. 程式處理內容
 
@@ -117,19 +119,37 @@ ID> 1001,8
 
 ## 設定檔 config.json
 
-相對路徑以 config.json 所在資料夾為基準（包成 exe 時為 exe 所在資料夾）。
+### 路徑設定 `paths`
+
+```json
+"paths": {
+    "csv_dir": "D:/週檢/csv",
+    "check_xlsx": "D:/週檢/BOS_SystemCheck.xlsx",
+    "track_xlsx": "//fileserver/IT/週檢/系統檢核問題追蹤.xlsx"
+}
+```
+
+| 欄位 | 說明 |
+|---|---|
+| `csv_dir` | CSV 資料夾 |
+| `check_xlsx` | 檢核表（填 O/X） |
+| `track_xlsx` | 問題追蹤表（貼 CSV），**可忽略事件ID 清單也從這個檔案讀** |
+
+- 可用絕對路徑、網路磁碟或共用資料夾路徑
+- Windows 路徑請用正斜線 `/`，或把反斜線寫兩次：`"D:\\週檢\\csv"`
+- 相對路徑以 config.json 所在資料夾為基準（包成 exe 時為 exe 所在資料夾）
+
+### 其他設定
 
 | 區段 | 欄位 | 說明 |
 |---|---|---|
-| `ignore_list` | `xlsx` / `sheet` / `id_column` | 可忽略事件ID 清單位置 |
-| `csv` | `dir` | CSV 資料夾 |
-| | `id_column` / `level_column` / `desc_column` | CSV 的 ID、等級（警告/錯誤）、說明欄名 |
-| `check_sheet` | `xlsx` | 檢核表 |
-| | `sheet` | 工作表名稱，`null` = 第一個工作表 |
+| `ignore_list` | `sheet` / `id_column` | 可忽略事件ID 的工作表與欄位 |
+| `csv` | `id_column` / `level_column` / `desc_column` | CSV 的 ID、等級（警告/錯誤）、說明欄名 |
+| `check_sheet` | `sheet` | 工作表名稱，`null` = 第一個工作表 |
 | | `header_row` | 標題列在第幾列 |
 | | `warn_header` / `error_header` / `note_header` | 警告、錯誤、備註欄標題 |
 | | `output` | 另存路徑，`null` = 覆寫原檔 |
-| `track` | `xlsx` / `sheet` | 問題追蹤表與工作表（不存在會自動建立） |
+| `track` | `sheet` | 追蹤表的工作表（不存在會自動建立） |
 | | `host_header` / `week_header` | 第一、二欄標題 |
 | | `output` | 另存路徑，`null` = 覆寫原檔 |
 
@@ -143,4 +163,4 @@ pyinstaller --onefile search_ignore.py
 pyinstaller --onefile fill_check.py
 ```
 
-產出在 `dist\`。把 exe、`config.json`、兩個 Excel 檔與 `csv\` 資料夾放在同一個資料夾即可使用。
+產出在 `dist\`。exe 旁邊放 `config.json`；Excel 與 CSV 資料夾放在 `paths` 設定的位置（用相對路徑時就放在 exe 旁邊）。

@@ -19,22 +19,24 @@
 需求套件: pip install pandas openpyxl
 用法:
     python fill_check.py
-    python fill_check.py <csv資料夾> <檢核表xlsx>
+    python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   （有給的參數會取代設定檔的路徑）
 
 設定檔: 與本程式同資料夾的 config.json
-    ignore_list.xlsx / sheet / id_column      可忽略事件ID 清單位置
-    csv.dir                                   要讀取的 CSV 資料夾
+    paths.csv_dir                             要讀取的 CSV 資料夾
+    paths.check_xlsx                          要填寫 O/X 的檢核表（BOS_SystemCheck.xlsx）
+    paths.track_xlsx                          問題追蹤表（系統檢核問題追蹤.xlsx），可忽略清單也從這裡讀
+    ignore_list.sheet / id_column             可忽略事件ID 的工作表與欄位
     csv.id_column / level_column / desc_column  CSV 的 ID、警告/錯誤分類、說明欄位
-    check_sheet.xlsx                          要填寫的檢核表
     check_sheet.sheet                         工作表名稱，null = 第一個工作表
     check_sheet.header_row                    標題列在第幾列
     check_sheet.warn/error/note_header        警告、錯誤、備註欄的標題
     check_sheet.output                        另存路徑，null = 直接覆寫檢核表
-    track.xlsx                                要貼上 CSV 內容的問題追蹤表
     track.sheet                               工作表名稱，不存在會自動建立；null = 第一個工作表
     track.host_header / week_header           第一欄、第二欄的標題
     track.output                              另存路徑，null = 直接覆寫追蹤表
-    設定檔中的相對路徑以 config.json 所在資料夾為基準
+    路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
+    JSON 裡的反斜線要寫兩次（\\），或改用正斜線 /
+    相對路徑以 config.json 所在資料夾為基準
 """
 import sys
 import glob
@@ -61,16 +63,18 @@ def _path(p):
 with open(CONFIG_PATH, encoding="utf-8-sig") as f:
     _cfg = json.load(f)
 
-IGNORE_XLSX   = _path(_cfg["ignore_list"]["xlsx"])
+CSV_DIR    = _path(_cfg["paths"]["csv_dir"])
+CHECK_XLSX = _path(_cfg["paths"]["check_xlsx"])
+TRACK_XLSX = _path(_cfg["paths"]["track_xlsx"])
+
+IGNORE_XLSX   = TRACK_XLSX
 IGNORE_SHEET  = _cfg["ignore_list"]["sheet"]
 IGNORE_COLUMN = _cfg["ignore_list"]["id_column"]
 
-CSV_DIR          = _path(_cfg["csv"]["dir"])
 CSV_ID_COLUMN    = _cfg["csv"]["id_column"]
 CSV_LEVEL_COLUMN = _cfg["csv"]["level_column"]
 CSV_DESC_COLUMN  = _cfg["csv"]["desc_column"]
 
-CHECK_XLSX   = _path(_cfg["check_sheet"]["xlsx"])
 CHECK_SHEET  = _cfg["check_sheet"]["sheet"]
 HEADER_ROW   = _cfg["check_sheet"]["header_row"]
 WARN_HEADER  = _cfg["check_sheet"]["warn_header"]
@@ -78,7 +82,6 @@ ERROR_HEADER = _cfg["check_sheet"]["error_header"]
 NOTE_HEADER  = _cfg["check_sheet"]["note_header"]
 OUTPUT_XLSX  = _path(_cfg["check_sheet"]["output"])
 
-TRACK_XLSX   = _path(_cfg["track"]["xlsx"])
 TRACK_SHEET  = _cfg["track"]["sheet"]
 HOST_HEADER  = _cfg["track"]["host_header"]
 WEEK_HEADER  = _cfg["track"]["week_header"]
@@ -279,10 +282,16 @@ def save(wb, path):
 def main():
     csv_dir = sys.argv[1] if len(sys.argv) > 1 else CSV_DIR
     check_xlsx = sys.argv[2] if len(sys.argv) > 2 else CHECK_XLSX
+    track_xlsx = sys.argv[3] if len(sys.argv) > 3 else TRACK_XLSX
     check_output = OUTPUT_XLSX or check_xlsx
-    track_output = TRACK_OUTPUT or TRACK_XLSX
+    track_output = TRACK_OUTPUT or track_xlsx
 
-    ignore_ids = load_ignore_ids(IGNORE_XLSX)
+    for label, p in (("CSV 資料夾", csv_dir), ("檢核表", check_xlsx), ("追蹤表", track_xlsx)):
+        if not os.path.exists(p):
+            print(f"[錯誤] 找不到{label}: {p}（請確認 config.json 的 paths）")
+            sys.exit(1)
+
+    ignore_ids = load_ignore_ids(track_xlsx)
     print(f"可忽略事件ID 共 {len(ignore_ids)} 筆")
 
     csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
@@ -295,7 +304,7 @@ def main():
     cols = find_columns(check_ws)
     host_rows = find_host_rows(check_ws)
 
-    track_wb = openpyxl.load_workbook(TRACK_XLSX)
+    track_wb = openpyxl.load_workbook(track_xlsx)
     track_ws = get_track_sheet(track_wb)
 
     for path in csv_files:

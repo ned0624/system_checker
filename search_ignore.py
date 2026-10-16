@@ -9,7 +9,7 @@
     r / reload        重新讀取 Excel（清單有更新時用）
     q / quit / exit   結束程式（也可以直接關閉視窗）
 
-設定沿用 config.json 的 ignore_list（xlsx / sheet / id_column），
+設定沿用 config.json：paths.track_xlsx（可忽略清單所在的 Excel）與 ignore_list（sheet / id_column），
 包成執行檔時 config.json 與 Excel 放在 exe 同一個資料夾。
 
 打包: pip install pyinstaller
