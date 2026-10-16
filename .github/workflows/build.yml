@@ -49,20 +49,16 @@ jobs:
 
       - name: Smoke test
         shell: pwsh
-        env:
-          PYTHONIOENCODING: utf-8
         run: |
-          [Console]::OutputEncoding = [Text.Encoding]::UTF8
-          $OutputEncoding = [Text.Encoding]::UTF8
-          # 搜尋工具：輸入 q 應正常結束
+          # 搜尋工具：輸入 q 應正常結束（exit 0）
           "q" | .\SystemCheck\search_ignore.exe
-          if ($LASTEXITCODE -ne 0) { throw "search_ignore.exe failed" }
-          # 填表程式：config 的路徑不存在，應印出「找不到」並以 1 結束（代表 exe 能啟動、讀到 config）
+          if ($LASTEXITCODE -ne 0) { throw "search_ignore.exe failed: $LASTEXITCODE" }
+          # 填表程式：config 的路徑在 runner 上不存在，應提示 paths.csv_dir 並以 1 結束（代表 exe 能啟動、讀到 config）
           $o = & .\SystemCheck\fill_check\fill_check.exe 2>&1 | Out-String
           Write-Output $o
-          if ($o -notmatch "找不到") { throw "fill_check.exe did not start correctly" }
+          if ($LASTEXITCODE -ne 1 -or $o -notmatch "paths\.csv_dir") { throw "fill_check.exe did not start correctly: $LASTEXITCODE" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: SystemCheck
           path: |

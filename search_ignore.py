@@ -52,7 +52,7 @@ class Quit(Exception):
 
 def ask(prompt):
     try:
-        text = input(prompt).strip()
+        text = input(prompt).replace("\ufeff", "").strip()  # 去掉管線輸入可能夾帶的 BOM
     except (EOFError, KeyboardInterrupt):
         print()
         raise Quit
