@@ -1,0 +1,68 @@
+name: Build Windows exe
+
+# 推 v 開頭的 tag（例: v1.0.0）時打包並建立 Release；也可以在 Actions 頁面手動執行
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install packages
+        run: pip install pyinstaller pandas openpyxl
+
+      # 與 build_exe.bat 相同的打包參數
+      - name: Build search_ignore.exe
+        run: pyinstaller --onefile --noconfirm --exclude-module pandas --exclude-module numpy --exclude-module PIL --exclude-module lxml search_ignore.py
+
+      - name: Build fill_check (onedir)
+        run: pyinstaller --onedir --noconfirm --exclude-module PIL --exclude-module lxml fill_check.py
+
+      # 打包成與 D:\SystemCheck 相同的資料夾結構
+      - name: Assemble SystemCheck folder
+        shell: pwsh
+        run: |
+          $out = "SystemCheck"
+          New-Item -ItemType Directory -Force $out, "$out\EventLog", "$out\logs" | Out-Null
+          Copy-Item -Recurse dist\fill_check "$out\fill_check"
+          Copy-Item config.json "$out\fill_check\config.json"
+          Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, README.md $out
+          Compress-Archive -Path $out -DestinationPath SystemCheck.zip
+          Copy-Item dist\search_ignore.exe search_ignore.exe
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          # 搜尋工具：輸入 q 應正常結束
+          "q" | .\SystemCheck\search_ignore.exe
+          if ($LASTEXITCODE -ne 0) { throw "search_ignore.exe failed" }
+          # 填表程式：config 的路徑不存在，應印出「找不到」並以 1 結束（代表 exe 能啟動、讀到 config）
+          $o = & .\SystemCheck\fill_check\fill_check.exe 2>&1 | Out-String
+          Write-Output $o
+          if ($o -notmatch "找不到") { throw "fill_check.exe did not start correctly" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SystemCheck
+          path: |
+            SystemCheck.zip
+            search_ignore.exe
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SystemCheck.zip
+            search_ignore.exe
