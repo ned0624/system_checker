@@ -29,6 +29,7 @@
 設定檔: 與本程式同資料夾的 config.json
     paths.csv_dir                             要讀取的 CSV 資料夾
     paths.check_xlsx                          要填寫 O/X 的檢核表（BOS_SystemCheck.xlsx）
+                                              路徑中可寫 {week}，會換成 CSV 的週別（例: BOS_..._{week}.xlsx → _W2642.xlsx）
     paths.track_xlsx                          問題追蹤表（系統檢核問題追蹤.xlsx），可忽略清單也從這裡讀
     ignore_list.sheet / id_column             可忽略事件ID 的工作表與欄位
     csv.id_column / level_column / desc_column  CSV 的 ID、警告/錯誤分類、說明欄位
@@ -362,27 +363,37 @@ def main():
     csv_dir = sys.argv[1] if len(sys.argv) > 1 else CSV_DIR
     check_xlsx = sys.argv[2] if len(sys.argv) > 2 else CHECK_XLSX
     track_xlsx = sys.argv[3] if len(sys.argv) > 3 else TRACK_XLSX
-    check_output = OUTPUT_XLSX or check_xlsx
-    track_output = TRACK_OUTPUT or track_xlsx
 
-    for label, p in (("CSV 資料夾", csv_dir), ("檢核表", check_xlsx), ("追蹤表", track_xlsx)):
-        if not os.path.exists(p):
-            print(f"[錯誤] 找不到{label}: {p}（請確認 config.json 的 paths）")
-            sys.exit(1)
-
-    ignore_ids = load_ignore_ids(track_xlsx)
-    print(f"可忽略事件ID 共 {len(ignore_ids)} 筆")
-
+    if not os.path.isdir(csv_dir):
+        print(f"[錯誤] 找不到 CSV 資料夾: {csv_dir}（請確認 config.json 的 paths.csv_dir）")
+        sys.exit(1)
     csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
     if not csv_files:
         print(f"資料夾內沒有 CSV: {csv_dir}")
         return
     # 資料夾會累積每週的 CSV，只處理日期最新的那一批（舊週的追蹤表資料不動）
     latest = max(parse_filename(p)[1] for p in csv_files)
+    week = week_label(latest)
     old = [p for p in csv_files if parse_filename(p)[1] != latest]
     csv_files = [p for p in csv_files if parse_filename(p)[1] == latest]
-    print(f"處理 {latest:%Y%m%d}（{week_label(latest)}）的 CSV 共 {len(csv_files)} 個"
+    print(f"處理 {latest:%Y%m%d}（{week}）的 CSV 共 {len(csv_files)} 個"
           + (f"，較舊的 {len(old)} 個略過" if old else ""))
+
+    # 路徑中的 {week} 換成這批 CSV 的週別，例: BOS_..._{week}.xlsx → BOS_..._W2642.xlsx
+    check_xlsx = check_xlsx.replace("{week}", week)
+    track_xlsx = track_xlsx.replace("{week}", week)
+    check_output = (OUTPUT_XLSX or check_xlsx).replace("{week}", week)
+    track_output = (TRACK_OUTPUT or track_xlsx).replace("{week}", week)
+    for label, key, p in (("檢核表", "check_xlsx", check_xlsx), ("追蹤表", "track_xlsx", track_xlsx)):
+        if not os.path.isfile(p):
+            print(f"[錯誤] 找不到{label}: {p}（請確認 config.json 的 paths.{key}）")
+            sys.exit(1)
+    print(f"CSV 資料夾: {csv_dir}")
+    print(f"檢核表: {check_xlsx}")
+    print(f"追蹤表: {track_xlsx}")
+
+    ignore_ids = load_ignore_ids(track_xlsx)
+    print(f"可忽略事件ID 共 {len(ignore_ids)} 筆")
 
     check_wb = openpyxl.load_workbook(check_xlsx)
     check_ws = check_wb[CHECK_SHEET] if CHECK_SHEET else check_wb.worksheets[0]

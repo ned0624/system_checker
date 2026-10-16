@@ -171,13 +171,18 @@ ID> 1001,8
 
 ### 路徑設定 `paths`
 
+三個位置可以各自不同：
+
 ```json
 "paths": {
-    "csv_dir": "D:/週檢/csv",
-    "check_xlsx": "D:/週檢/BOS_SystemCheck.xlsx",
+    "csv_dir": "D:/SystemCheck/EventLog",
+    "check_xlsx": "E:/健檢/BOS_系統穩定健檢狀態記錄表_{week}.xlsx",
     "track_xlsx": "//fileserver/IT/週檢/系統檢核問題追蹤.xlsx"
 }
 ```
+
+路徑中的 `{week}` 會自動換成這批 CSV 的週別（例：`_{week}.xlsx` → `_W2642.xlsx`），
+檢核表每週換檔名時不用改設定。執行時畫面與 log 會印出實際使用的三個路徑。
 
 | 欄位 | 說明 |
 |---|---|
