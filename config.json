@@ -1,0 +1,12 @@
+{
+    "track": {
+        "xlsx": "系統檢核問題追蹤.xlsx",
+        "sheet": "檢核紀錄",
+        "host_header": "伺服器",
+        "week_header": "週別",
+        "output": null
+    },
+    "csv": {
+        "dir": "./csv"
+    }
+}
