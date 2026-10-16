@@ -38,10 +38,11 @@ D:\SystemCheck\
 └─ logs\                   執行紀錄（依日期命名）
 ```
 
-`run_weekly.bat` 依序執行：
+`run_weekly.bat` 可直接雙擊執行，依序：
 1. `EventLogCheck.ps1`：讀 `serverlist.txt`，撈每台伺服器近 7 天的事件，輸出 `EventLog\20261016_伺服器名.csv`
-2. `fill_check.py`：讀 `EventLog\` 內**日期最新**的那批 CSV（舊週的 CSV 留著不處理），填檢核表 O/X、貼到追蹤表
-3. 結束後停在視窗，結果也記在 `logs\`
+2. 檢查有沒有產生**今天日期**的 CSV；沒有就停止（避免拿上週的 CSV 重跑、蓋掉上週追蹤表裡填的影響 / Action）
+3. 有 `fill_check.exe` 就執行 exe，沒有就用 Python 執行 `fill_check.py`；兩者都沒有會顯示錯誤並停止
+4. 依結果顯示「完成」或「填表沒有完成」，停在視窗等按任意鍵；詳細結果記在 `logs\`
 
 也可以排進 Windows 工作排程器，每週固定時間執行 `run_weekly.bat`。
 
