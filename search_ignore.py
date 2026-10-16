@@ -22,6 +22,13 @@ import re
 import sys
 import openpyxl
 
+# 輸出被導向檔案或非中文系統時，顯示不了的字以 ? 代替，不讓程式中斷
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 DEFAULT_SHEET = "可忽略事件ID"
 ID_HEADERS = ("可忽略事件ID", "ID", "Id", "事件識別碼")
 QUIT_CMDS = {"q", "quit", "exit", "離開"}

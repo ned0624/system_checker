@@ -59,6 +59,14 @@ import pandas as pd
 import openpyxl
 
 # ===== 讀取設定檔 =====
+# 輸出被導向檔案或非中文系統時，顯示不了的字以 ? 代替，不讓程式中斷
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def _base_dir():
     """程式所在資料夾；包成執行檔（PyInstaller）時是 exe 所在資料夾，config.json 放在旁邊"""
     if getattr(sys, "frozen", False):

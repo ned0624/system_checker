@@ -19,9 +19,9 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -49,7 +49,11 @@ jobs:
 
       - name: Smoke test
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $OutputEncoding = [Text.Encoding]::UTF8
           # 搜尋工具：輸入 q 應正常結束
           "q" | .\SystemCheck\search_ignore.exe
           if ($LASTEXITCODE -ne 0) { throw "search_ignore.exe failed" }
