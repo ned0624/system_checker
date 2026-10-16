@@ -57,6 +57,7 @@ jobs:
           $o = & .\SystemCheck\fill_check\fill_check.exe 2>&1 | Out-String
           Write-Output $o
           if ($LASTEXITCODE -ne 1 -or $o -notmatch "paths\.csv_dir") { throw "fill_check.exe did not start correctly: $LASTEXITCODE" }
+          exit 0
 
       - uses: actions/upload-artifact@v5
         with:
