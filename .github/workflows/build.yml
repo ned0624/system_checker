@@ -1,9 +1,15 @@
 name: Build Windows exe
 
-# 推 v 開頭的 tag（例: v1.0.0）時打包並建立 Release；也可以在 Actions 頁面手動執行
+# 程式有更新推到 master 時自動打包，並建立 Release（tag: v1.0.<執行編號>）；也可以在 Actions 頁面手動執行
 on:
   push:
-    tags: ["v*"]
+    branches: [master]
+    paths:
+      - "*.py"
+      - "*.bat"
+      - "*.ps1"
+      - "config.json"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -60,9 +66,15 @@ jobs:
             search_ignore.exe
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: SystemCheck v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          body: |
+            - SystemCheck.zip：解壓到 D:\ 會得到 D:\SystemCheck（fill_check、search_ignore.exe、run_weekly.bat、EventLogCheck.ps1）
+            - search_ignore.exe：可忽略事件ID 搜尋工具，單一檔案
+            使用前請修改 SystemCheck\fill_check\config.json 的 paths
           files: |
             SystemCheck.zip
             search_ignore.exe
