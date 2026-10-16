@@ -1,12 +1,29 @@
 {
+    "ignore_list": {
+        "xlsx": "系統檢核問題追蹤.xlsx",
+        "sheet": "可忽略事件ID",
+        "id_column": "ID"
+    },
+    "csv": {
+        "dir": "./csv",
+        "id_column": "ID",
+        "level_column": "事件分類",
+        "desc_column": "事件說明"
+    },
+    "check_sheet": {
+        "xlsx": "BOS_SystemCheck.xlsx",
+        "sheet": null,
+        "header_row": 1,
+        "warn_header": "警告",
+        "error_header": "錯誤",
+        "note_header": "備註",
+        "output": null
+    },
     "track": {
         "xlsx": "系統檢核問題追蹤.xlsx",
         "sheet": "檢核紀錄",
         "host_header": "伺服器",
         "week_header": "週別",
         "output": null
-    },
-    "csv": {
-        "dir": "./csv"
     }
 }
