@@ -95,15 +95,15 @@ def ask_excel():
     """詢問 Excel 路徑，直到找到檔案為止"""
     last = read_last_path()
     while True:
-        hint = f"（Enter 沿用 {last}）" if last else ""
-        path = ask(f"\n可忽略清單 Excel 路徑{hint}> ").strip('"').strip("'")
+        hint = f" (Enter = {last})" if last else ""
+        path = ask(f"\nIgnore list Excel path{hint}> ").strip('"').strip("'")
         if not path and last:
             path = last
         if not path:
             continue
         if os.path.isfile(path):
             return path
-        print(f"[錯誤] 找不到檔案: {path}")
+        print(f"[ERROR] File not found: {path}")
 
 
 def pick_sheet(path):
@@ -112,11 +112,11 @@ def pick_sheet(path):
     wb.close()
     if DEFAULT_SHEET in sheets:
         return DEFAULT_SHEET
-    print(f"找不到工作表「{DEFAULT_SHEET}」，請選擇：")
+    print(f"Sheet '{DEFAULT_SHEET}' not found. Choose a sheet:")
     for i, name in enumerate(sheets, 1):
         print(f"  {i}. {name}")
     while True:
-        text = ask("工作表編號> ")
+        text = ask("Sheet number> ")
         if text.isdigit() and 1 <= int(text) <= len(sheets):
             return sheets[int(text) - 1]
 
@@ -132,7 +132,7 @@ def load_ignore_table(path, sheet):
         names = [h for h in headers if h]
         id_name = next((h for h in ID_HEADERS if h in names), None)
         id_idx = headers.index(id_name) if id_name else 0
-        id_col = id_name or "第一欄"
+        id_col = id_name or "first column"
         others = [(i, h) for i, h in enumerate(headers) if h and i != id_idx]
         table = {}
         for rownum, row in enumerate(rows, start=2):
@@ -141,14 +141,14 @@ def load_ignore_table(path, sheet):
                 continue
             info = "  ".join(f"{h}: {str(row[i]).strip()}" for i, h in others
                              if i < len(row) and not is_blank(row[i]))
-            info = f"第 {rownum} 列" + (f"  {info}" if info else "")
+            info = f"row {rownum}" + (f"  {info}" if info else "")
             for part in str(v).replace("\n", ",").replace("、", ",").split(","):
                 n = norm(part)
                 if n:
                     table.setdefault(n, []).append(info)
     finally:
         wb.close()
-    print(f"已載入可忽略事件ID 共 {len(table)} 筆（{os.path.basename(path)} / {sheet} / 欄位: {id_col}）")
+    print(f"Loaded {len(table)} ignorable event IDs ({os.path.basename(path)} / {sheet} / column: {id_col})")
     return table
 
 
@@ -170,12 +170,12 @@ def search(table, text):
     for eid in ids:
         if eid in table:
             hit += 1
-            print(f"  [可忽略] {eid}")
+            print(f"  [IGNORABLE] {eid}")
             for info in table[eid]:
-                print(f"           {info}")
+                print(f"                {info}")
         else:
-            print(f"  [不在清單] {eid}")
-    print(f"共 {len(ids)} 筆：可忽略 {hit} 筆，不在清單 {len(ids) - hit} 筆")
+            print(f"  [NOT IN LIST] {eid}")
+    print(f"Total {len(ids)}: ignorable {hit}, not in list {len(ids) - hit}")
 
 
 def open_excel():
@@ -188,15 +188,15 @@ def open_excel():
         except Quit:
             raise
         except Exception as e:
-            print(f"[錯誤] 讀取失敗（檔案若在 Excel 中開啟仍可讀；請確認是 xlsx 檔）: {e}")
+            print(f"[ERROR] Cannot read file (must be .xlsx; it can stay open in Excel): {e}")
             continue
         save_last_path(path)
         return path, sheet, table
 
 
 def main():
-    print("可忽略事件ID 搜尋")
-    print("輸入 ID 查詢，多筆用逗號隔開；r 重新讀取；f 換檔案；q 結束（或直接關閉視窗）")
+    print("Ignorable Event ID Search")
+    print("Enter IDs separated by commas | r = reload | f = change file | q = quit (or close the window)")
     try:
         path, sheet, table = open_excel()
         while True:
@@ -206,7 +206,7 @@ def main():
                 try:
                     table = load_ignore_table(path, sheet)
                 except Exception as e:
-                    print(f"[錯誤] 讀取失敗，沿用舊清單: {e}")
+                    print(f"[ERROR] Reload failed, keeping previous list: {e}")
             elif cmd in FILE_CMDS:
                 path, sheet, table = open_excel()
             else:

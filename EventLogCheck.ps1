@@ -43,8 +43,8 @@ function Export-ServerEvents([string]$server, [string]$name) {
     }
     if ($logs.Count -eq 0 -and $listErr) {
         $reason = $listErr[0].Exception.Message
-        if (-not $reason) { $reason = '無法連線（請確認主機名稱、網路/防火牆、RPC 與帳號權限）' }
-        Write-Log "  [錯誤] $name 無法讀取記錄檔清單: $reason"
+        if (-not $reason) { $reason = 'cannot connect (check host name, network/firewall, RPC and account permissions)' }
+        Write-Log "  [ERROR] $name cannot list event logs: $reason"
         return $false
     }
 
@@ -55,7 +55,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
         catch {
             # 沒有符合的事件不算錯誤（用 ErrorId 判斷，中文系統的訊息文字是中文）
             if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') {
-                Write-Log "  [警告] $name 記錄檔 [$($log.LogName)] 讀取失敗: $($_.Exception.Message)"
+                Write-Log "  [WARN] $name cannot read log [$($log.LogName)]: $($_.Exception.Message)"
             }
         }
     }
@@ -81,14 +81,14 @@ function Export-ServerEvents([string]$server, [string]$name) {
         # 沒有錯誤/警告也輸出只有標題的 CSV，檢核表才會填 O（沒有 CSV 代表撈取失敗）
         Set-Content -Path $csv -Value $csvHeader -Encoding UTF8
     }
-    Write-Log "  $name：錯誤/警告 $($rows.Count) 種 → $csv"
+    Write-Log "  $name : $($rows.Count) error/warning event types -> $csv"
     return $true
 }
 
 Write-Log ""
-Write-Log "===== EventLogCheck 開始 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')（近 $Days 天，伺服器清單: $ServerList）====="
+Write-Log "===== EventLogCheck start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (last $Days days, server list: $ServerList) ====="
 if (-not (Test-Path $ServerList)) {
-    Write-Log "[錯誤] 找不到伺服器清單: $ServerList"
+    Write-Log "[ERROR] Server list not found: $ServerList"
     exit 1
 }
 # 一行一台，空行與 # 開頭的行略過
@@ -99,6 +99,6 @@ foreach ($s in $servers) {
     Write-Log $s
     if (-not (Export-ServerEvents $s $s)) { $failed += $s }
 }
-Write-Log "===== EventLogCheck 完成：伺服器 $($servers.Count) 台，失敗 $($failed.Count) 台 ====="
-foreach ($s in $failed) { Write-Log "  撈取失敗: $s" }
+Write-Log "===== EventLogCheck done: $($servers.Count) servers, $($failed.Count) failed ====="
+foreach ($s in $failed) { Write-Log "  FAILED: $s" }
 exit 0

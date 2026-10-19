@@ -89,7 +89,7 @@ except Exception as _e:
     if __name__ != "__main__":
         raise
     # 設定檔讀不到時還不知道 log_dir，log 寫在預設的 logs 資料夾
-    _msg = f"[錯誤] 無法讀取設定檔 {CONFIG_PATH}：{type(_e).__name__}: {_e}"
+    _msg = f"[ERROR] Cannot read config file {CONFIG_PATH}: {type(_e).__name__}: {_e}"
     print(_msg)
     os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
     with open(os.path.join(BASE_DIR, "logs", f"{datetime.now():%Y%m%d}.log"),
@@ -151,7 +151,7 @@ def level_kind(level):
 def keep_warn_error(df):
     """只留下錯誤/警告的列，回傳 (過濾後的 df, 略過筆數)"""
     if CSV_LEVEL_COLUMN not in df.columns:
-        raise KeyError(f"找不到欄位「{CSV_LEVEL_COLUMN}」，現有欄位: {list(df.columns)}")
+        raise KeyError(f"Column '{CSV_LEVEL_COLUMN}' not found, columns: {list(df.columns)}")
     mask = df[CSV_LEVEL_COLUMN].map(level_kind).notna()
     return df[mask].reset_index(drop=True), int((~mask).sum())
 
@@ -175,14 +175,14 @@ def read_csv_any(path):
             return df
         except UnicodeDecodeError:
             continue
-    raise ValueError(f"無法判斷編碼: {path}")
+    raise ValueError(f"Cannot detect file encoding: {path}")
 
 
 def load_ignore_ids(xlsx_path):
     df = pd.read_excel(xlsx_path, sheet_name=IGNORE_SHEET, dtype=str)
     df.columns = df.columns.str.strip()
     if IGNORE_COLUMN not in df.columns:
-        raise KeyError(f"Excel 找不到欄位「{IGNORE_COLUMN}」，現有欄位: {list(df.columns)}")
+        raise KeyError(f"Ignore list: column '{IGNORE_COLUMN}' not found, columns: {list(df.columns)}")
     ids = set()
     for v in df[IGNORE_COLUMN]:
         # 若一格內有多個 ID（以逗號/換行分隔）也一併拆開
@@ -203,7 +203,7 @@ def find_columns(ws):
     cols = {}
     for h in (WARN_HEADER, ERROR_HEADER, NOTE_HEADER):
         if h not in headers:
-            raise KeyError(f"檢核表找不到標題「{h}」，現有標題: {list(headers)}")
+            raise KeyError(f"Check sheet: header '{h}' not found, headers: {list(headers)}")
         cols[h] = headers[h]
     return cols
 
@@ -222,7 +222,7 @@ def check_csv(df, ignore_ids):
     """回傳 (有警告, 有錯誤, 備註文字)；df 已只含錯誤/警告，只計算不在可忽略清單的事件"""
     for col in (CSV_ID_COLUMN, CSV_LEVEL_COLUMN, CSV_DESC_COLUMN):
         if col not in df.columns:
-            raise KeyError(f"找不到欄位「{col}」，現有欄位: {list(df.columns)}")
+            raise KeyError(f"Column '{col}' not found, columns: {list(df.columns)}")
 
     has_warn = has_error = False
     notes = []
@@ -252,7 +252,7 @@ def fill_check_row(ws, cols, r, df, ignore_ids, host):
     note_cell.value = note or None
     if note:
         note_cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
-    print(f"  檢核表: 警告={'X' if has_warn else 'O'} 錯誤={'X' if has_error else 'O'}"
+    print(f"  Check sheet: warning={'X' if has_warn else 'O'} error={'X' if has_error else 'O'}"
           + (f"\n    {note.replace(chr(10), chr(10) + '    ')}" if note else ""))
 
 
@@ -280,7 +280,7 @@ def get_track_sheet(wb):
     if not TRACK_SHEET:
         return wb.worksheets[0]
     if TRACK_SHEET not in wb.sheetnames:
-        raise KeyError(f"追蹤表找不到工作表「{TRACK_SHEET}」，現有工作表: {wb.sheetnames}")
+        raise KeyError(f"Tracking file: sheet '{TRACK_SHEET}' not found, sheets: {wb.sheetnames}")
     return wb[TRACK_SHEET]
 
 
@@ -291,7 +291,7 @@ def track_columns(ws):
     need = [HOST_HEADER, WEEK_HEADER] + list(TRACK_COLUMNS)
     missing = [h for h in need if re.sub(r"\s+", "", h) not in headers]
     if missing:
-        raise KeyError(f"追蹤表找不到標題 {missing}，現有標題: {list(headers)}")
+        raise KeyError(f"Tracking sheet: headers {missing} not found, headers: {list(headers)}")
     cols = {h: headers[re.sub(r"\s+", "", h)] for h in need}
     ignore_col = headers.get(re.sub(r"\s+", "", IGNORE_HEADER)) if IGNORE_HEADER else None
     return cols, ignore_col
@@ -334,7 +334,7 @@ def paste_csv(ws, cols, df, host, week):
         for header, csv_col in TRACK_COLUMNS.items():
             ws.cell(row=r, column=cols[header]).value = cell_value(row[csv_col]) if csv_col in df.columns else None
         r += 1
-    print(f"  追蹤表: {week} 貼上 {len(df)} 筆" + (f"（取代舊資料 {removed} 筆）" if removed else ""))
+    print(f"  Tracking sheet: {week} pasted {len(df)} rows" + (f" (replaced {removed} old rows)" if removed else ""))
 
 
 def fill_ignore_marks(ws, cols, ignore_col, ignore_ids):
@@ -365,9 +365,9 @@ def save(wb, path):
     try:
         wb.save(path)
     except PermissionError:
-        print(f"無法寫入 {path}，請先關閉 Excel 中開啟的檔案後再執行")
+        print(f"[ERROR] Cannot write {path}. Close the file in Excel and run again.")
         sys.exit(1)
-    print(f"已儲存: {path}")
+    print(f"Saved: {path}")
 
 
 def main():
@@ -376,35 +376,35 @@ def main():
     track_xlsx = sys.argv[3] if len(sys.argv) > 3 else TRACK_XLSX
 
     if not os.path.isdir(csv_dir):
-        print(f"[錯誤] 找不到 CSV 資料夾: {csv_dir}（請確認 config.json 的 paths.csv_dir）")
+        print(f"[ERROR] CSV folder not found: {csv_dir} (check paths.csv_dir in config.json)")
         sys.exit(1)
     csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
     if not csv_files:
-        print(f"資料夾內沒有 CSV: {csv_dir}")
+        print(f"No CSV files in folder: {csv_dir}")
         return
     # 資料夾會累積每週的 CSV，只處理日期最新的那一批（舊週的追蹤表資料不動）
     latest = max(parse_filename(p)[1] for p in csv_files)
     week = week_label(latest)
     old = [p for p in csv_files if parse_filename(p)[1] != latest]
     csv_files = [p for p in csv_files if parse_filename(p)[1] == latest]
-    print(f"處理 {latest:%Y%m%d}（{week}）的 CSV 共 {len(csv_files)} 個"
-          + (f"，較舊的 {len(old)} 個略過" if old else ""))
+    print(f"Processing {len(csv_files)} CSV files of {latest:%Y%m%d} ({week})"
+          + (f", skipped {len(old)} older files" if old else ""))
 
     # 路徑中的 {week} 換成這批 CSV 的週別，例: BOS_..._{week}.xlsx → BOS_..._W2642.xlsx
     check_xlsx = check_xlsx.replace("{week}", week)
     track_xlsx = track_xlsx.replace("{week}", week)
     check_output = (OUTPUT_XLSX or check_xlsx).replace("{week}", week)
     track_output = (TRACK_OUTPUT or track_xlsx).replace("{week}", week)
-    for label, key, p in (("檢核表", "check_xlsx", check_xlsx), ("追蹤表", "track_xlsx", track_xlsx)):
+    for label, key, p in (("check sheet", "check_xlsx", check_xlsx), ("tracking file", "track_xlsx", track_xlsx)):
         if not os.path.isfile(p):
-            print(f"[錯誤] 找不到{label}: {p}（請確認 config.json 的 paths.{key}）")
+            print(f"[ERROR] {label} not found: {p} (check paths.{key} in config.json)")
             sys.exit(1)
-    print(f"CSV 資料夾: {csv_dir}")
-    print(f"檢核表: {check_xlsx}")
-    print(f"追蹤表: {track_xlsx}")
+    print(f"CSV folder   : {csv_dir}")
+    print(f"Check sheet  : {check_xlsx}")
+    print(f"Tracking file: {track_xlsx}")
 
     ignore_ids = load_ignore_ids(track_xlsx)
-    print(f"可忽略事件ID 共 {len(ignore_ids)} 筆")
+    print(f"Ignorable event IDs: {len(ignore_ids)}")
 
     check_wb = openpyxl.load_workbook(check_xlsx)
     check_ws = check_wb[CHECK_SHEET] if CHECK_SHEET else check_wb.worksheets[0]
@@ -423,21 +423,21 @@ def main():
         try:
             df, skipped = keep_warn_error(read_csv_any(path))
         except Exception as e:
-            print(f"  [錯誤] {e}")
-            problems.append((fname, f"錯誤：CSV 無法讀取，整個略過（{e}）"))
+            print(f"  [ERROR] {e}")
+            problems.append((fname, f"ERROR: cannot read CSV, skipped ({e})"))
             continue
-        print(f"  錯誤/警告 {len(df)} 筆" + (f"，略過資訊等其他等級 {skipped} 筆" if skipped else ""))
+        print(f"  Errors/warnings: {len(df)}" + (f", skipped {skipped} information/other rows" if skipped else ""))
 
         r = host_rows.get(host.upper())
         if r is None:
-            print("  [略過] 檢核表第一欄找不到此伺服器")
-            problems.append((fname, "略過：檢核表找不到此伺服器，未填 O/X（追蹤表照貼）"))
+            print("  [SKIP] Server not found in first column of check sheet")
+            problems.append((fname, "SKIP: server not in check sheet, O/X not filled (tracking sheet still pasted)"))
         else:
             try:
                 fill_check_row(check_ws, cols, r, df, ignore_ids, host)
             except Exception as e:
-                print(f"  [錯誤] 檢核表: {e}")
-                problems.append((fname, f"錯誤：未填 O/X（{e}）"))
+                print(f"  [ERROR] Check sheet: {e}")
+                problems.append((fname, f"ERROR: O/X not filled ({e})"))
 
         paste_csv(track_ws, track_cols, df, host, week_label(d))
 
@@ -447,7 +447,7 @@ def main():
     save(check_wb, check_output)
     save(track_wb, track_output)
 
-    print(f"\n===== 完成：CSV 共 {len(csv_files)} 個，有狀況 {len(problems)} 個 =====")
+    print(f"\n===== Done: {len(csv_files)} CSV files, {len(problems)} with problems =====")
     for fname, msg in problems:
         print(f"  {fname}: {msg}")
 
@@ -485,16 +485,16 @@ def run():
     with open(log_path, "a", encoding=enc) as log:
         sys.stdout = _Tee(console, log)
         try:
-            print(f"\n===== 開始執行 {datetime.now():%Y-%m-%d %H:%M:%S} =====")
+            print(f"\n===== fill_check start {datetime.now():%Y-%m-%d %H:%M:%S} =====")
             main()
         except SystemExit as e:
             code = e.code or 0
         except Exception as e:
             code = 1
-            print(f"[錯誤] 程式中止，Excel 未存檔：{type(e).__name__}: {e}")
+            print(f"[ERROR] Aborted, Excel files NOT saved: {type(e).__name__}: {e}")
             log.write("\n" + traceback.format_exc())
         finally:
-            print(f"結束 {datetime.now():%Y-%m-%d %H:%M:%S}，log: {log_path}")
+            print(f"End {datetime.now():%Y-%m-%d %H:%M:%S}, log: {log_path}")
             sys.stdout = console
     sys.exit(code)
 

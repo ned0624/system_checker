@@ -41,8 +41,8 @@ function Export-ServerEvents([string]$server, [string]$name) {
     }
     if ($logs.Count -eq 0 -and $listErr) {
         $reason = $listErr[0].Exception.Message
-        if (-not $reason) { $reason = '無法連線（請確認主機名稱、網路/防火牆、RPC 與帳號權限）' }
-        Write-Log "  [錯誤] $name 無法讀取記錄檔清單: $reason"
+        if (-not $reason) { $reason = 'cannot connect (check host name, network/firewall, RPC and account permissions)' }
+        Write-Log "  [ERROR] $name cannot list event logs: $reason"
         return $false
     }
 
@@ -53,7 +53,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
         catch {
             # 沒有符合的事件不算錯誤（用 ErrorId 判斷，中文系統的訊息文字是中文）
             if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') {
-                Write-Log "  [警告] $name 記錄檔 [$($log.LogName)] 讀取失敗: $($_.Exception.Message)"
+                Write-Log "  [WARN] $name cannot read log [$($log.LogName)]: $($_.Exception.Message)"
             }
         }
     }
@@ -79,15 +79,15 @@ function Export-ServerEvents([string]$server, [string]$name) {
         # 沒有錯誤/警告也輸出只有標題的 CSV，檢核表才會填 O（沒有 CSV 代表撈取失敗）
         Set-Content -Path $csv -Value $csvHeader -Encoding UTF8
     }
-    Write-Log "  $name：錯誤/警告 $($rows.Count) 種 → $csv"
+    Write-Log "  $name : $($rows.Count) error/warning event types -> $csv"
     return $true
 }
 
 Write-Log ""
-Write-Log "===== EventLogCheck_Local 開始 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')（近 $Days 天，本機: $env:COMPUTERNAME）====="
+Write-Log "===== EventLogCheck_Local start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (last $Days days, computer: $env:COMPUTERNAME) ====="
 if (Export-ServerEvents $null $env:COMPUTERNAME) {
-    Write-Log "===== EventLogCheck_Local 完成 ====="
+    Write-Log "===== EventLogCheck_Local done ====="
     exit 0
 }
-Write-Log "===== EventLogCheck_Local 失敗 ====="
+Write-Log "===== EventLogCheck_Local FAILED ====="
 exit 1
