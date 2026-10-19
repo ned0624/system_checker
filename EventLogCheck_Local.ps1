@@ -1,8 +1,9 @@
-﻿# 撈「本機」近 N 天的事件檢視器錯誤/警告，輸出一個 CSV：
-#   <OutDir>\日期_電腦名稱.csv
-# 用法（在每台伺服器上執行）：powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-Days 7]
-# - OutDir 可設成共用資料夾（例: \\fileserver\SystemCheck\EventLog），各台的 CSV 集中在一起給 fill_check 讀
-# - 只抓 重大/錯誤/警告（Level 1~3），不抓資訊；沒有任何錯誤/警告時產生只有標題的 CSV
+# Collect event log errors/warnings of the last N days on THIS computer, one CSV:
+#   <OutDir>\yyyyMMdd_<computer name>.csv
+# Usage (run on each server): powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-Days 7]
+# - OutDir can be a share (e.g. \\fileserver\SystemCheck\EventLog) to collect all servers' CSVs for fill_check
+# - Only Critical/Error/Warning (Level 1-3), no Information; header-only CSV when there are none
+# - Keep this file pure ASCII (see $levelNames below)
 param(
     [string]$OutDir = 'D:\SystemCheck\EventLog',
     [string]$LogDir = 'D:\SystemCheck\logs',
@@ -15,8 +16,15 @@ $date  = Get-Date -Format 'yyyyMMdd'
 New-Item -ItemType Directory -Force -Path $OutDir, $LogDir | Out-Null
 $logFile = Join-Path $LogDir "$date.log"
 
-# 等級用數字對應，不靠 LevelDisplayName（部分事件來源沒有顯示名稱會是空白）
-$levelNames = @{ 1 = '重大'; 2 = '錯誤'; 3 = '警告' }
+# Level name from the level number, not LevelDisplayName (empty for some providers).
+# Chinese names are built from char codes so this file stays pure ASCII:
+# Windows PowerShell 5.1 reads a .ps1 without BOM as ANSI, which would garble Chinese literals.
+#   1 = Critical (0x91CD 0x5927), 2 = Error (0x932F 0x8AA4), 3 = Warning (0x8B66 0x544A)
+$levelNames = @{
+    1 = [string][char]0x91CD + [char]0x5927
+    2 = [string][char]0x932F + [char]0x8AA4
+    3 = [string][char]0x8B66 + [char]0x544A
+}
 $csvHeader  = '"LevelDisplayName","Id","LogName","Message","TimeCreated","Count"'
 
 function Write-Log([string]$msg) {
@@ -24,12 +32,12 @@ function Write-Log([string]$msg) {
     Add-Content -Path $logFile -Value $msg -Encoding UTF8
 }
 
-# 撈一台的事件並輸出 CSV；$server 為 $null 時撈本機。成功回傳 $true
+# Collect events of one computer and write its CSV; $server = $null means local. Returns $true on success
 function Export-ServerEvents([string]$server, [string]$name) {
     $remote = @{}
     if ($server) { $remote.ComputerName = $server }
 
-    # 有寫入紀錄的系統管理類記錄檔（個別記錄檔沒權限讀取時略過；整台連不上時視為失敗）
+    # Administrative logs with records (logs we cannot read are skipped; an unreachable computer is a failure)
     $listErr = $null
     try {
         $logs = @(Get-WinEvent @remote -ListLog * -ErrorAction SilentlyContinue -ErrorVariable listErr |
@@ -51,14 +59,14 @@ function Export-ServerEvents([string]$server, [string]$name) {
             Get-WinEvent @remote -FilterHashtable @{ LogName = $log.LogName; Level = 1, 2, 3; StartTime = $start } -ErrorAction Stop
         }
         catch {
-            # 沒有符合的事件不算錯誤（用 ErrorId 判斷，中文系統的訊息文字是中文）
+            # "No matching events" is not an error (check ErrorId; the message text is localized)
             if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') {
                 Write-Log "  [WARN] $name cannot read log [$($log.LogName)]: $($_.Exception.Message)"
             }
         }
     }
 
-    # 同一來源、同一 ID 只留一筆：時間取最近一次，Count 為期間內發生次數
+    # One row per provider + ID: TimeCreated = latest occurrence, Count = occurrences in the period
     $rows = @($events | Group-Object ProviderName, Id | ForEach-Object {
         $e = $_.Group | Sort-Object TimeCreated -Descending | Select-Object -First 1
         [pscustomobject]@{
@@ -76,7 +84,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
     if ($rows.Count -gt 0) {
         $rows | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
     } else {
-        # 沒有錯誤/警告也輸出只有標題的 CSV，檢核表才會填 O（沒有 CSV 代表撈取失敗）
+        # No errors/warnings: write a header-only CSV so the check sheet gets O (no CSV = collection failed)
         Set-Content -Path $csv -Value $csvHeader -Encoding UTF8
     }
     Write-Log "  $name : $($rows.Count) error/warning event types -> $csv"

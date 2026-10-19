@@ -37,6 +37,11 @@ jobs:
             iconv -f cp950 -t utf-8 $f.bat | cmp - $f.bat.txt || { echo "$f.bat.txt 與 $f.bat 內容不同，請重新產生"; exit 1; }
           done
 
+      - name: ps1 must be pure ASCII (PowerShell 5.1 reads BOM-less files as ANSI)
+        shell: bash
+        run: |
+          if grep -nP '[^\x00-\x7F]' EventLogCheck*.ps1; then echo "non-ASCII characters found in ps1"; exit 1; fi
+
       - name: Syntax check
         shell: powershell
         run: |

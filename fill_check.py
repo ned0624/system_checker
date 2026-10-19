@@ -136,6 +136,8 @@ LOG_DIR = _path(_cfg.get("log_dir") or "logs")
 # 事件等級（CSV 等級欄位的值，不分大小寫）；不在這兩組的等級（例: 資訊）一律不讀
 ERROR_LEVELS = {"錯誤", "重大", "error", "critical"}
 WARN_LEVELS  = {"警告", "warning"}
+# 確定可以略過的等級；其他沒見過的值（例如編碼錯誤的亂碼）會提出警告，避免錯誤被默默略過
+SKIP_LEVELS  = {"資訊", "詳細資訊", "詳細", "information", "verbose", ""}
 
 
 def level_kind(level):
@@ -149,11 +151,14 @@ def level_kind(level):
 
 
 def keep_warn_error(df):
-    """只留下錯誤/警告的列，回傳 (過濾後的 df, 略過筆數)"""
+    """只留下錯誤/警告的列，回傳 (過濾後的 df, 略過筆數, 無法辨識的等級值)"""
     if CSV_LEVEL_COLUMN not in df.columns:
         raise KeyError(f"Column '{CSV_LEVEL_COLUMN}' not found, columns: {list(df.columns)}")
-    mask = df[CSV_LEVEL_COLUMN].map(level_kind).notna()
-    return df[mask].reset_index(drop=True), int((~mask).sum())
+    levels = df[CSV_LEVEL_COLUMN]
+    mask = levels.map(level_kind).notna()
+    unknown = sorted({str(v).strip() for v in levels[~mask].dropna()
+                      if str(v).strip().lower() not in SKIP_LEVELS})
+    return df[mask].reset_index(drop=True), int((~mask).sum()), unknown
 
 
 def norm(v):
@@ -421,12 +426,17 @@ def main():
         fname = os.path.basename(path)
         print(host)
         try:
-            df, skipped = keep_warn_error(read_csv_any(path))
+            df, skipped, unknown = keep_warn_error(read_csv_any(path))
         except Exception as e:
             print(f"  [ERROR] {e}")
             problems.append((fname, f"ERROR: cannot read CSV, skipped ({e})"))
             continue
         print(f"  Errors/warnings: {len(df)}" + (f", skipped {skipped} information/other rows" if skipped else ""))
+        if unknown:
+            msg = (f"unknown level values {unknown} were skipped - the CSV may be garbled "
+                   f"(re-collect with the latest EventLogCheck.ps1)")
+            print(f"  [WARN] {msg}")
+            problems.append((fname, f"WARN: {msg}"))
 
         r = host_rows.get(host.upper())
         if r is None:
