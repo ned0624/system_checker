@@ -38,6 +38,32 @@ D:\SystemCheck\
 └─ logs\                   執行紀錄（依日期命名）
 ```
 
+### 撈取腳本（兩個版本）
+
+| 腳本 | 在哪裡執行 | 撈誰 | 輸出 |
+|---|---|---|---|
+| `EventLogCheck.ps1` | 你的電腦（`run_weekly.bat` 用這支） | `serverlist.txt` 裡的每台伺服器（遠端） | `EventLog\日期_伺服器名.csv` |
+| `EventLogCheck_Local.ps1` | 每台伺服器上 | 本機 | `EventLog\日期_電腦名稱.csv` |
+
+共同行為：
+- 只抓 **重大 / 錯誤 / 警告**（Level 1~3），不抓資訊；預設近 7 天
+- 同一來源、同一 ID 只留一筆，`TimeCreated` 為最近一次發生時間，`Count` 為期間內次數
+- 某個記錄檔讀取失敗會寫進 log；整台連不上時**不產生 CSV**，log 最後列出「撈取失敗」的伺服器
+- 沒有任何錯誤/警告的伺服器會產生**只有標題的 CSV**，檢核表會填 O O
+- log 與 fill_check 共用 `logs\日期.log`
+
+參數（都可省略）：
+```
+powershell -ExecutionPolicy Bypass -File EventLogCheck.ps1 -ServerList D:\SystemCheck\serverlist.txt -OutDir D:\SystemCheck\EventLog -LogDir D:\SystemCheck\logs -Days 7
+powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 -OutDir \\fileserver\SystemCheck\EventLog -Days 7
+```
+本機版的 `-OutDir` 可設成共用資料夾，讓各台伺服器的 CSV 集中到同一處給 fill_check 讀。
+
+`serverlist.txt` 一行一台，空行與 `#` 開頭的行會略過。
+
+CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤表加標題（例如「發生時間」「次數」），
+再於 config.json 的 `track.columns` 加上 `"發生時間": "TimeCreated", "次數": "Count"`。
+
 `run_weekly.bat` 可直接雙擊執行，依序：
 1. `EventLogCheck.ps1`：讀 `serverlist.txt`，撈每台伺服器近 7 天的事件，輸出 `EventLog\20261016_伺服器名.csv`
 2. 檢查有沒有產生**今天日期**的 CSV；沒有就停止（避免拿上週的 CSV 重跑、蓋掉上週追蹤表裡填的影響 / Action）
