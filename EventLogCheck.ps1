@@ -31,12 +31,20 @@ function Export-ServerEvents([string]$server, [string]$name) {
     $remote = @{}
     if ($server) { $remote.ComputerName = $server }
 
-    # 有寫入紀錄的系統管理類記錄檔
+    # 有寫入紀錄的系統管理類記錄檔（個別記錄檔沒權限讀取時略過；整台連不上時視為失敗）
     $listErr = $null
-    $logs = @(Get-WinEvent @remote -ListLog * -ErrorAction SilentlyContinue -ErrorVariable listErr |
-        Where-Object { $_.LogType -eq 'Administrative' -and $_.IsEnabled -and $_.RecordCount -gt 0 -and $_.LastWriteTime -gt $start })
+    try {
+        $logs = @(Get-WinEvent @remote -ListLog * -ErrorAction SilentlyContinue -ErrorVariable listErr |
+            Where-Object { $_.LogType -eq 'Administrative' -and $_.IsEnabled -and $_.RecordCount -gt 0 -and $_.LastWriteTime -gt $start })
+    }
+    catch {
+        $listErr = @($_)
+        $logs = @()
+    }
     if ($logs.Count -eq 0 -and $listErr) {
-        Write-Log "  [錯誤] $name 無法讀取記錄檔清單（連線或權限問題）: $($listErr[0].Exception.Message)"
+        $reason = $listErr[0].Exception.Message
+        if (-not $reason) { $reason = '無法連線（請確認主機名稱、網路/防火牆、RPC 與帳號權限）' }
+        Write-Log "  [錯誤] $name 無法讀取記錄檔清單: $reason"
         return $false
     }
 

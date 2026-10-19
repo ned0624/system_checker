@@ -48,7 +48,9 @@ jobs:
         shell: powershell
         run: |
           Set-Content "$env:RUNNER_TEMP\servers.txt" "# comment`r`nlocalhost`r`n`r`nno-such-host-xyz"
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -ServerList "$env:RUNNER_TEMP\servers.txt" -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs"
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -ServerList "$env:RUNNER_TEMP\servers.txt" -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs" 2>&1 | Out-String
+          Write-Output $out
+          if ($out -match 'FullyQualifiedErrorId') { throw "raw PowerShell error shown to user" }
           if ($LASTEXITCODE -ne 0) { throw "server-list version failed: $LASTEXITCODE" }
 
       - name: Check output

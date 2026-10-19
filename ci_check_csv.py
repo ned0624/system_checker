@@ -24,4 +24,5 @@ for name, path in files.items():
 log = open(glob.glob(os.path.join(log_dir, "*.log"))[0], encoding="utf-8-sig").read()
 print(log)
 assert "撈取失敗: no-such-host-xyz" in log, "unreachable host not reported in log"
+assert "無法讀取記錄檔清單: \n" not in log and "無法讀取記錄檔清單: \r" not in log, "empty failure reason"
 print("OK")
