@@ -9,6 +9,7 @@ on:
       - "*.bat"
       - "*.ps1"
       - "config.json"
+      - "ci_check_csv.py"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
@@ -16,7 +17,51 @@ permissions:
   contents: write
 
 jobs:
+  # 在 Windows PowerShell 5.1 實際執行兩支撈取腳本，確認 CSV 能被 fill_check 讀取
+  test-ps1:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install pandas
+
+      - name: Syntax check
+        shell: powershell
+        run: |
+          foreach ($f in 'EventLogCheck.ps1', 'EventLogCheck_Local.ps1') {
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errs) | Out-Null
+            if ($errs) { $errs | ForEach-Object { Write-Output "$f : $_" }; throw "syntax error in $f" }
+          }
+
+      - name: Run local version
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs"
+          if ($LASTEXITCODE -ne 0) { throw "local version failed: $LASTEXITCODE" }
+
+      - name: Run server-list version (localhost + unreachable host)
+        shell: powershell
+        run: |
+          Set-Content "$env:RUNNER_TEMP\servers.txt" "# comment`r`nlocalhost`r`n`r`nno-such-host-xyz"
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -ServerList "$env:RUNNER_TEMP\servers.txt" -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs"
+          if ($LASTEXITCODE -ne 0) { throw "server-list version failed: $LASTEXITCODE" }
+
+      - name: Check output
+        shell: powershell
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          Get-ChildItem "$env:RUNNER_TEMP\ev" | Format-Table Name, Length
+          python ci_check_csv.py "$env:RUNNER_TEMP\ev" "$env:COMPUTERNAME" "$env:RUNNER_TEMP\logs"
+          if ($LASTEXITCODE -ne 0) { throw "CSV check failed" }
+
   build:
+    needs: test-ps1
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -43,7 +88,7 @@ jobs:
           New-Item -ItemType Directory -Force $out, "$out\EventLog", "$out\logs" | Out-Null
           Copy-Item -Recurse dist\fill_check "$out\fill_check"
           Copy-Item config.json "$out\fill_check\config.json"
-          Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, README.md $out
+          Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, EventLogCheck_Local.ps1, README.md $out
           Compress-Archive -Path $out -DestinationPath SystemCheck.zip
           Copy-Item dist\search_ignore.exe search_ignore.exe
 
