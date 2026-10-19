@@ -26,6 +26,9 @@ pip install pandas openpyxl
 
 ## 一鍵執行（撈 CSV + 填表）
 
+> 公司網路看不到 GitHub 上的 `.bat` 檔時，請看同名的 `.txt`：[run_weekly.bat.txt](run_weekly.bat.txt)、[build_exe.bat.txt](build_exe.bat.txt)。
+> 內容與 `.bat` 相同（UTF-8 編碼方便在網頁上看）。要從 txt 還原成 bat 時，用記事本「另存新檔」→ 編碼選 **ANSI**，檔名改成 `.bat`，否則中文訊息會變亂碼。
+
 ```
 D:\SystemCheck\
 ├─ run_weekly.bat          ← 每週點這個

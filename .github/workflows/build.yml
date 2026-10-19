@@ -8,6 +8,7 @@ on:
       - "*.py"
       - "*.bat"
       - "*.ps1"
+      - "*.bat.txt"
       - "config.json"
       - "ci_check_csv.py"
       - ".github/workflows/build.yml"
@@ -28,6 +29,13 @@ jobs:
           python-version: "3.12"
 
       - run: pip install pandas
+
+      - name: Check .bat.txt copies are in sync
+        shell: bash
+        run: |
+          for f in run_weekly build_exe; do
+            iconv -f cp950 -t utf-8 $f.bat | cmp - $f.bat.txt || { echo "$f.bat.txt 與 $f.bat 內容不同，請重新產生"; exit 1; }
+          done
 
       - name: Syntax check
         shell: powershell
