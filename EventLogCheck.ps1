@@ -179,17 +179,23 @@ function Export-ServerEvents([string]$server, [string]$name) {
         }
     } | Sort-Object Level, Id | Select-Object LevelDisplayName, Id, LogName, Message, TimeCreated, Count)
 
+    # Both branches write through the PowerShell file system provider (works on DFS/UNC shares
+    # where a direct .NET call failed). -Encoding UTF8 = UTF-8 with BOM in Windows PowerShell 5.1.
     $csv = Join-Path $OutDir "${date}_$name.csv"
     try {
         if ($rows.Count -gt 0) {
             $rows | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
         } else {
             # No errors/warnings: header-only CSV so the check sheet gets O (no CSV = collection failed)
-            [IO.File]::WriteAllText($csv, $csvHeader + "`r`n", $utf8Bom)
+            $csvHeader | Out-File -LiteralPath $csv -Encoding UTF8 -ErrorAction Stop
         }
     }
     catch {
-        Write-Log "  [ERROR] $name cannot write CSV $csv : $($_.Exception.Message)"
+        $ex = $_.Exception
+        while ($ex.InnerException) { $ex = $ex.InnerException }
+        Write-Log "  [ERROR] $name cannot write CSV $csv"
+        Write-Log "          $($ex.GetType().Name): $($ex.Message)"
+        Write-Log "          folder exists: $(Test-Path -LiteralPath $OutDir -PathType Container), file exists: $(Test-Path -LiteralPath $csv), user: $env:USERDOMAIN\$env:USERNAME"
         return $false
     }
     Write-Log "  $name : $($rows.Count) error/warning event types -> $csv (excluded $excludedCount events)"
