@@ -1,0 +1,12 @@
+# Event IDs excluded by EventLogCheck.ps1 / EventLogCheck_Local.ps1
+# Events with these IDs are NOT written to the CSV (so they never reach the check sheet or tracking sheet).
+# One ID per line, or several per line separated by commas/spaces. Text after # is ignored.
+# Source: colleague's excludedIds list (transcribed from a screenshot - please verify against the original).
+1, 2, 4, 11, 16, 36, 56, 105, 110, 129
+131, 153, 200, 201, 202, 258, 304, 307, 360, 1000
+1006, 1008, 1014, 1023, 1030, 1055, 1085, 1108, 1109, 1111
+1129, 1309, 1530, 1534, 1801, 2182, 3006, 4656, 4879, 5013
+5719, 7011, 7022, 7031, 7034, 8021, 8032, 8198, 8200, 8208
+10010, 10016, 10028, 10036, 11036, 15300, 15301, 16397, 16969, 36871
+36874, 36876, 36887, 36888, 40960, 40970, 2147484850, 2147484957, 2147485665, 2147488527
+3221226480, 3221226495, 3221229793, 3221233481, 3221233670, 3221618724

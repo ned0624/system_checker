@@ -1,15 +1,17 @@
 # Collect event log errors/warnings of the last N days from every server in serverlist.txt (remote),
 # one CSV per server: <OutDir>\yyyyMMdd_<server>.csv
-# Usage: powershell -ExecutionPolicy Bypass -File EventLogCheck.ps1 [-ServerList ...] [-OutDir ...] [-LogDir ...] [-Days 7]
+# Usage: powershell -ExecutionPolicy Bypass -File EventLogCheck.ps1 [-ServerList ...] [-OutDir ...] [-LogDir ...] [-Days 7] [-ExcludeFile ...]
 # - Only Critical/Error/Warning (Level 1-3), no Information
 # - Unreachable server: no CSV, reported in the log; server without errors/warnings: header-only CSV
 # - The account must be allowed to read event logs remotely
+# - Event IDs listed in excluded_ids.txt are dropped (see -ExcludeFile)
 # - Keep this file pure ASCII (see $levelNames below)
 param(
     [string]$ServerList = 'D:\SystemCheck\serverlist.txt',
     [string]$OutDir     = 'D:\SystemCheck\EventLog',
     [string]$LogDir     = 'D:\SystemCheck\logs',
-    [int]$Days          = 7
+    [int]$Days          = 7,
+    [string]$ExcludeFile = 'D:\SystemCheck\excluded_ids.txt'
 )
 
 $ErrorActionPreference = 'Continue'
@@ -28,6 +30,21 @@ $levelNames = @{
     3 = [string][char]0x8B66 + [char]0x544A
 }
 $csvHeader  = '"LevelDisplayName","Id","LogName","Message","TimeCreated","Count"'
+
+# Event IDs to drop before writing the CSV (one per line or comma separated, # = comment).
+# Missing file = nothing excluded.
+function Read-ExcludeIds {
+    $ids = @{}
+    if ($ExcludeFile -and (Test-Path $ExcludeFile)) {
+        Get-Content $ExcludeFile | ForEach-Object { ($_ -split '#')[0] -split '[,\s]+' } |
+            ForEach-Object { $_.Trim().Trim('"') } | Where-Object { $_ } |
+            ForEach-Object { $ids[$_] = $true }
+        Write-Log "Excluded event IDs: $($ids.Count) (from $ExcludeFile)"
+    } else {
+        Write-Log "No exclude file ($ExcludeFile), no event IDs excluded"
+    }
+    return $ids
+}
 
 function Write-Log([string]$msg) {
     Write-Host $msg
@@ -68,6 +85,11 @@ function Export-ServerEvents([string]$server, [string]$name) {
         }
     }
 
+    # Drop excluded event IDs
+    $all = @($events)
+    $events = @($all | Where-Object { -not $excludeIds.ContainsKey([string]$_.Id) })
+    $excludedCount = $all.Count - $events.Count
+
     # One row per provider + ID: TimeCreated = latest occurrence, Count = occurrences in the period
     $rows = @($events | Group-Object ProviderName, Id | ForEach-Object {
         $e = $_.Group | Sort-Object TimeCreated -Descending | Select-Object -First 1
@@ -89,12 +111,13 @@ function Export-ServerEvents([string]$server, [string]$name) {
         # No errors/warnings: write a header-only CSV so the check sheet gets O (no CSV = collection failed)
         Set-Content -Path $csv -Value $csvHeader -Encoding UTF8
     }
-    Write-Log "  $name : $($rows.Count) error/warning event types -> $csv"
+    Write-Log "  $name : $($rows.Count) error/warning event types -> $csv (excluded $excludedCount events)"
     return $true
 }
 
 Write-Log ""
 Write-Log "===== EventLogCheck start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (last $Days days, server list: $ServerList) ====="
+$excludeIds = Read-ExcludeIds
 if (-not (Test-Path $ServerList)) {
     Write-Log "[ERROR] Server list not found: $ServerList"
     exit 1

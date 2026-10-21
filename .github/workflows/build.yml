@@ -10,6 +10,7 @@ on:
       - "*.ps1"
       - "*.bat.txt"
       - "config.json"
+      - "excluded_ids.txt"
       - "ci_check_csv.py"
       - ".github/workflows/build.yml"
   workflow_dispatch:
@@ -57,11 +58,12 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs"
           if ($LASTEXITCODE -ne 0) { throw "local version failed: $LASTEXITCODE" }
 
-      - name: Run server-list version (localhost + unreachable host)
+      - name: Run server-list version (localhost + unreachable host + exclude list)
         shell: powershell
         run: |
           Set-Content "$env:RUNNER_TEMP\servers.txt" "# comment`r`nlocalhost`r`n`r`nno-such-host-xyz"
-          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -ServerList "$env:RUNNER_TEMP\servers.txt" -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs" 2>&1 | Out-String
+          Set-Content "$env:RUNNER_TEMP\exclude.txt" "# test`r`n11, 46"
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -ServerList "$env:RUNNER_TEMP\servers.txt" -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs" -ExcludeFile "$env:RUNNER_TEMP\exclude.txt" 2>&1 | Out-String
           Write-Output $out
           if ($out -match 'FullyQualifiedErrorId') { throw "raw PowerShell error shown to user" }
           if ($LASTEXITCODE -ne 0) { throw "server-list version failed: $LASTEXITCODE" }
@@ -103,7 +105,7 @@ jobs:
           New-Item -ItemType Directory -Force $out, "$out\EventLog", "$out\logs" | Out-Null
           Copy-Item -Recurse dist\fill_check "$out\fill_check"
           Copy-Item config.json "$out\fill_check\config.json"
-          Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, EventLogCheck_Local.ps1, README.md $out
+          Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, EventLogCheck_Local.ps1, excluded_ids.txt, README.md $out
           Compress-Archive -Path $out -DestinationPath SystemCheck.zip
           Copy-Item dist\search_ignore.exe search_ignore.exe
 

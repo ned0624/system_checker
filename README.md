@@ -34,6 +34,7 @@ D:\SystemCheck\
 ├─ run_weekly.bat          ← 每週點這個
 ├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
 ├─ serverlist.txt          伺服器清單（一行一台）
+├─ excluded_ids.txt        撈取時直接排除的事件 ID
 ├─ fill_check.py          填檢核表、貼追蹤表（或 fill_check\ 資料夾內的 exe）
 ├─ search_ignore.py / .exe 可忽略事件ID 搜尋
 ├─ config.json
@@ -54,6 +55,9 @@ D:\SystemCheck\
 - 某個記錄檔讀取失敗會寫進 log；整台連不上時**不產生 CSV**，log 最後列出「撈取失敗」的伺服器
 - 沒有任何錯誤/警告的伺服器會產生**只有標題的 CSV**，檢核表會填 O O
 - log 與 fill_check 共用 `logs\日期.log`
+- **排除 ID**：`excluded_ids.txt`（預設 `D:\SystemCheck\excluded_ids.txt`，可用 `-ExcludeFile` 指定）裡的事件 ID 直接不寫進 CSV，
+  所以不會出現在檢核表備註與追蹤表。檔案不存在就不排除。一行一個或用逗號分隔，`#` 之後是註解。
+  log 會記錄載入了幾個 ID、每台排除了幾筆事件。
 
 參數（都可省略）：
 ```
