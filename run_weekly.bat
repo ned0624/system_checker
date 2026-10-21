@@ -11,7 +11,14 @@ set COLLECTOR=EventLogCheck.ps1
 
 echo [1/2] Collecting event logs with %COLLECTOR% ...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%BASE%\%COLLECTOR%"
-REM Exit code 1 = no CSV could be written (folder problem, or every server failed)
+REM Exit code 2 = no errors/warnings left after exclusion, no CSV written: nothing to fill in
+REM (check 2 first: "if errorlevel N" means "exit code >= N")
+if errorlevel 2 (
+    echo.
+    echo No error/warning events after exclusion - no CSV written, nothing to fill in.
+    goto END
+)
+REM Exit code 1 = error (folder not writable, or every server failed)
 if errorlevel 1 (
     echo.
     echo [ERROR] Event log collection failed. Stopped before filling the Excel files.

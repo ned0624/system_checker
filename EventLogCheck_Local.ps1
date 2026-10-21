@@ -2,9 +2,9 @@
 #   <OutDir>\yyyyMMdd_<computer name>.csv
 # Usage (run on each server): powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-Days 7] [-ExcludeFile ...]
 # - OutDir can be a share (e.g. \\fileserver\SystemCheck\EventLog) to collect all servers' CSVs
-# - Only Critical/Error/Warning (Level 1-3), no Information; header-only CSV when there are none
+# - Only Critical/Error/Warning (Level 1-3), no Information; no CSV when none are left after exclusion
 # - Event IDs listed in the exclude file are dropped
-# - Exit code 1 when the CSV could not be written or the output/log folder is unusable
+# - Exit code: 0 = CSV written, 1 = error (CSV/folder not writable), 2 = nothing to report
 # - Apart from the SETTINGS block, keep this file pure ASCII
 param(
     [string]$OutDir,
@@ -68,16 +68,28 @@ $start   = (Get-Date).AddDays(-$Days)
 $date    = Get-Date -Format 'yyyyMMdd'
 $utf8Bom = New-Object Text.UTF8Encoding($true)
 
-# Output and log folders must be usable, otherwise stop with exit code 1
+# Output and log folders must exist and be writable by this account, otherwise stop with exit code 1.
+# (On a share with access-based enumeration a folder without permission looks like it does not exist.)
+$account = "$env:USERDOMAIN\$env:USERNAME"
 foreach ($dir in @($OutDir, $LogDir)) {
     try {
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
             New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
         }
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+            throw "folder is not visible to this account (no permission, or the path is wrong)"
+        }
+        $probe = Join-Path $dir ('.write_test_' + [guid]::NewGuid().ToString('N') + '.tmp')
+        'test' | Out-File -LiteralPath $probe -Encoding ASCII -ErrorAction Stop
+        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
     }
     catch {
-        Write-Host "[ERROR] Cannot create or access folder: $dir"
-        Write-Host "        $($_.Exception.Message)"
+        $ex = $_.Exception
+        while ($ex.InnerException) { $ex = $ex.InnerException }
+        Write-Host "[ERROR] Cannot write to folder: $dir"
+        Write-Host "        $($ex.Message)"
+        Write-Host "        Account $account needs Modify permission on this folder (share and NTFS),"
+        Write-Host "        or run this script as an account that has it."
         exit 1
     }
 }
@@ -92,7 +104,6 @@ $levelNames = @{
     2 = [string][char]0x932F + [char]0x8AA4
     3 = [string][char]0x8B66 + [char]0x544A
 }
-$csvHeader = '"LevelDisplayName","Id","LogName","Message","TimeCreated","Count"'
 
 # Write to screen and log file (UTF-8). .NET file APIs are used so any valid path works.
 function Write-Log([string]$msg) {
@@ -123,7 +134,8 @@ function Read-ExcludeIds {
     return $ids
 }
 
-# Collect events of one computer and write its CSV; $server = $null means local. Returns $true on success
+# Collect events of one computer and write its CSV; $server = $null means local.
+# Returns 'ok' (CSV written), 'empty' (no events left after exclusion, no CSV) or 'fail'.
 function Export-ServerEvents([string]$server, [string]$name) {
     $remote = @{}
     if ($server) { $remote.ComputerName = $server }
@@ -142,7 +154,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
         $reason = $listErr[0].Exception.Message
         if (-not $reason) { $reason = 'cannot connect (check host name, network/firewall, RPC and account permissions)' }
         Write-Log "  [ERROR] $name cannot list event logs: $reason"
-        return $false
+        return 'fail'
     }
 
     $events = foreach ($log in $logs) {
@@ -176,36 +188,36 @@ function Export-ServerEvents([string]$server, [string]$name) {
         }
     } | Sort-Object Level, Id | Select-Object LevelDisplayName, Id, LogName, Message, TimeCreated, Count)
 
-    # Both branches write through the PowerShell file system provider (works on DFS/UNC shares
-    # where a direct .NET call failed). -Encoding UTF8 = UTF-8 with BOM in Windows PowerShell 5.1.
+    # Nothing left after exclusion: no CSV, only a log line
+    if ($rows.Count -eq 0) {
+        Write-Log "  $name : no error/warning events (excluded $excludedCount events), no CSV written"
+        return 'empty'
+    }
+
+    # -Encoding UTF8 = UTF-8 with BOM in Windows PowerShell 5.1
     $csv = Join-Path $OutDir "${date}_$name.csv"
     try {
-        if ($rows.Count -gt 0) {
-            $rows | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
-        } else {
-            # No errors/warnings: header-only CSV so the check sheet gets O (no CSV = collection failed)
-            $csvHeader | Out-File -LiteralPath $csv -Encoding UTF8 -ErrorAction Stop
-        }
+        $rows | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
     }
     catch {
         $ex = $_.Exception
         while ($ex.InnerException) { $ex = $ex.InnerException }
         Write-Log "  [ERROR] $name cannot write CSV $csv"
         Write-Log "          $($ex.GetType().Name): $($ex.Message)"
-        Write-Log "          folder exists: $(Test-Path -LiteralPath $OutDir -PathType Container), file exists: $(Test-Path -LiteralPath $csv), user: $env:USERDOMAIN\$env:USERNAME"
-        return $false
+        Write-Log "          folder visible: $(Test-Path -LiteralPath $OutDir -PathType Container), account: $account"
+        return 'fail'
     }
     Write-Log "  $name : $($rows.Count) error/warning event types -> $csv (excluded $excludedCount events)"
-    return $true
+    return 'ok'
 }
 
 Write-Log ""
 Write-Log "===== EventLogCheck_Local start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (last $Days days, computer: $env:COMPUTERNAME) ====="
 Write-Log "CSV folder : $OutDir"
 $excludeIds = Read-ExcludeIds
-if (Export-ServerEvents $null $env:COMPUTERNAME) {
-    Write-Log "===== EventLogCheck_Local done ====="
-    exit 0
+switch (Export-ServerEvents $null $env:COMPUTERNAME) {
+    'ok'    { Write-Log "===== EventLogCheck_Local done ====="; exit 0 }
+    # Exit code 2 = nothing to fill in (run_weekly.bat skips fill_check)
+    'empty' { Write-Log "===== EventLogCheck_Local done, no CSV written ====="; exit 2 }
+    default { Write-Log "===== EventLogCheck_Local FAILED ====="; exit 1 }
 }
-Write-Log "===== EventLogCheck_Local FAILED ====="
-exit 1

@@ -73,13 +73,29 @@ jobs:
           python ci_settings_test.py check "$env:RUNNER_TEMP\st" "$env:COMPUTERNAME"
           if ($LASTEXITCODE -ne 0) { throw "settings check failed" }
 
-      - name: No events gives a header-only CSV (-Days 0)
+      - name: No events left gives exit 2 and no CSV (-Days 0)
         shell: powershell
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -Days 0 -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt"
-          if ($LASTEXITCODE -ne 0) { throw "header-only run failed: $LASTEXITCODE" }
-          python -c "import glob,sys,pandas as pd; f=glob.glob(sys.argv[1]+'/*.csv'); assert len(f)==1, f; b=open(f[0],'rb').read(); assert b.startswith(b'\xef\xbb\xbf'), b[:10]; df=pd.read_csv(f[0],encoding='utf-8-sig'); assert len(df)==0 and list(df.columns)==['LevelDisplayName','Id','LogName','Message','TimeCreated','Count'], df.columns; print('header-only OK', f[0], b)" "$env:RUNNER_TEMP\ev0"
-          if ($LASTEXITCODE -ne 0) { throw "header-only check failed" }
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -Days 0 -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 2 -or $out -notmatch 'no CSV written') { throw "local -Days 0: expected exit 2, got $LASTEXITCODE" }
+          Set-Content "$env:RUNNER_TEMP\lh.txt" "localhost"
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -Days 0 -ServerList "$env:RUNNER_TEMP\lh.txt" -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 2 -or $out -notmatch '0 with CSV, 1 without events') { throw "server-list -Days 0: expected exit 2, got $LASTEXITCODE" }
+          if (Get-ChildItem "$env:RUNNER_TEMP\ev0" -Filter *.csv) { throw "CSV must not be written when no events are left" }
+          exit 0
+
+      - name: Folder without write permission fails at start
+        shell: powershell
+        run: |
+          $ro = "$env:RUNNER_TEMP\readonly"
+          New-Item -ItemType Directory -Force $ro | Out-Null
+          icacls $ro /deny "$($env:USERNAME):(OI)(CI)(W)" | Out-Null
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir $ro -LogDir "$env:RUNNER_TEMP\logs_ro" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'Cannot write to folder' -or $out -match 'done') { throw "read-only folder: expected exit 1 with permission message, got $LASTEXITCODE" }
+          exit 0
 
       - name: Failures must exit 1 and must not say done
         shell: powershell
