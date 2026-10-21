@@ -52,11 +52,38 @@ jobs:
             if ($errs) { $errs | ForEach-Object { Write-Output "$f : $_" }; throw "syntax error in $f" }
           }
 
-      - name: Run local version
+      - name: Run local version (explicit parameters)
         shell: powershell
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs"
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir "$env:RUNNER_TEMP\ev" -LogDir "$env:RUNNER_TEMP\logs" -ExcludeFile "$env:RUNNER_TEMP\none.txt"
           if ($LASTEXITCODE -ne 0) { throw "local version failed: $LASTEXITCODE" }
+
+      - name: SETTINGS block with non-ASCII folders (UTF-8 no BOM / UTF-8 BOM / ANSI)
+        shell: powershell
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python ci_settings_test.py make "$env:RUNNER_TEMP\st"
+          if ($LASTEXITCODE -ne 0) { throw "make failed" }
+          foreach ($v in 'utf8_nobom', 'utf8_bom', 'ansi') {
+            Write-Output "--- $v"
+            powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\st\$v\EventLogCheck_Local.ps1"
+            if ($LASTEXITCODE -ne 0) { throw "$v failed: $LASTEXITCODE" }
+          }
+          python ci_settings_test.py check "$env:RUNNER_TEMP\st" "$env:COMPUTERNAME"
+          if ($LASTEXITCODE -ne 0) { throw "settings check failed" }
+
+      - name: Failures must exit 1 and must not say done
+        shell: powershell
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir 'C:\bad<>|dir' -LogDir "$env:RUNNER_TEMP\logs" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 1 -or $out -match 'done') { throw "bad OutDir: expected exit 1 without 'done', got $LASTEXITCODE" }
+          Set-Content "$env:RUNNER_TEMP\bad_servers.txt" "no-such-host-xyz"
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -ServerList "$env:RUNNER_TEMP\bad_servers.txt" -OutDir "$env:RUNNER_TEMP\ev2" -LogDir "$env:RUNNER_TEMP\logs2" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'all 1 servers failed') { throw "all servers failed: expected exit 1, got $LASTEXITCODE" }
+          exit 0
 
       - name: Run server-list version (localhost + unreachable host + exclude list)
         shell: powershell

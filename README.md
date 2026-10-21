@@ -59,7 +59,20 @@ D:\SystemCheck\
   所以不會出現在檢核表備註與追蹤表。檔案不存在就不排除。一行一個或用逗號分隔，`#` 之後是註解。
   log 會記錄載入了幾個 ID、每台排除了幾筆事件。
 
-參數（都可省略）：
+**路徑設定**：直接改 ps1 開頭的 `SETTINGS` 區塊（`$Settings = @'` 到 `'@` 之間），例如：
+```
+$Settings = @'
+OutDir      = \\xintec.com.tw\Supporting_Org\中文資料夾\BOS\Z0_Others\SystemCheck\EventLog
+LogDir      = \\xintec.com.tw\Supporting_Org\中文資料夾\BOS\Z0_Others\SystemCheck\logs
+ExcludeFile = D:\SystemCheck\excluded_ids.txt
+Days        = 7
+'@
+```
+可以寫中文資料夾與共用資料夾路徑：程式會自己判斷 ps1 的存檔編碼（UTF-8 有無 BOM、ANSI 都可以）重新讀這一段，
+不會再變成亂碼。輸出或 log 資料夾無法建立/寫入、或所有伺服器都失敗時，ps1 會以結束碼 1 結束，`run_weekly.bat` 會停下不填表。
+`fill_check` 讀 CSV 的資料夾是 config.json 的 `paths.csv_dir`，要和 ps1 的 `OutDir` 指同一個位置。
+
+命令列參數（可省略，有給會覆蓋 SETTINGS）：
 ```
 powershell -ExecutionPolicy Bypass -File EventLogCheck.ps1 -ServerList D:\SystemCheck\serverlist.txt -OutDir D:\SystemCheck\EventLog -LogDir D:\SystemCheck\logs -Days 7
 powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 -OutDir \\fileserver\SystemCheck\EventLog -Days 7
@@ -72,10 +85,10 @@ CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤
 再於 config.json 的 `track.columns` 加上 `"發生時間": "TimeCreated", "次數": "Count"`。
 
 `run_weekly.bat` 可直接雙擊執行，依序：
-1. `EventLogCheck.ps1`：讀 `serverlist.txt`，撈每台伺服器近 7 天的事件，輸出 `EventLog\20261016_伺服器名.csv`
-2. 檢查有沒有產生**今天日期**的 CSV；沒有就停止（避免拿上週的 CSV 重跑、蓋掉上週追蹤表裡填的影響 / Action）
-3. 有 `fill_check.exe` 就執行 exe，沒有就用 Python 執行 `fill_check.py`；兩者都沒有會顯示錯誤並停止
-4. 依結果顯示「完成」或「填表沒有完成」，停在視窗等按任意鍵；詳細結果記在 `logs\`
+1. 執行 `COLLECTOR` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時把 bat 裡的 `set COLLECTOR=` 改成 `EventLogCheck_Local.ps1`）
+2. 撈取腳本結束碼為 1（資料夾無法使用或全部伺服器失敗）就停止，不填表
+3. 有 `fill_check\fill_check.exe` 就執行 exe，沒有就用 Python 執行 `fill_check.py`
+4. 依結果顯示 `Done.` 或錯誤訊息，停在視窗等按任意鍵
 
 也可以排進 Windows 工作排程器，每週固定時間執行 `run_weekly.bat`。
 

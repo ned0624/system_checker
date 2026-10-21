@@ -1,40 +1,119 @@
 # Collect event log errors/warnings of the last N days on THIS computer, one CSV:
 #   <OutDir>\yyyyMMdd_<computer name>.csv
 # Usage (run on each server): powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-Days 7] [-ExcludeFile ...]
-# - OutDir can be a share (e.g. \\fileserver\SystemCheck\EventLog) to collect all servers' CSVs for fill_check
+# - OutDir can be a share (e.g. \\fileserver\SystemCheck\EventLog) to collect all servers' CSVs
 # - Only Critical/Error/Warning (Level 1-3), no Information; header-only CSV when there are none
-# - Event IDs listed in excluded_ids.txt are dropped (see -ExcludeFile)
-# - Keep this file pure ASCII (see $levelNames below)
+# - Event IDs listed in the exclude file are dropped
+# - Exit code 1 when the CSV could not be written or the output/log folder is unusable
+# - Apart from the SETTINGS block, keep this file pure ASCII
 param(
-    [string]$OutDir = 'D:\SystemCheck\EventLog',
-    [string]$LogDir = 'D:\SystemCheck\logs',
-    [int]$Days      = 7,
-    [string]$ExcludeFile = 'D:\SystemCheck\excluded_ids.txt'
+    [string]$OutDir,
+    [string]$LogDir,
+    [int]$Days,
+    [string]$ExcludeFile
 )
 
+# ===== SETTINGS =====================================================================
+# Edit the values between the @' and '@ lines. Chinese folder names and network share
+# paths (\\server\share\...) are OK: the script re-reads this block from the file itself and
+# detects the file encoding (UTF-8 with/without BOM, or ANSI/Big5), so how Notepad saves
+# the file does not matter. Command-line parameters (-OutDir etc.) override these values.
+$Settings = @'
+OutDir      = D:\SystemCheck\EventLog
+LogDir      = D:\SystemCheck\logs
+ExcludeFile = D:\SystemCheck\excluded_ids.txt
+Days        = 7
+'@
+# ===== END OF SETTINGS ===============================================================
+
+# Read the SETTINGS block from this script file with encoding detection.
+# (PowerShell 5.1 itself reads a BOM-less file as ANSI, which garbles UTF-8 Chinese text.)
+function Read-ScriptSettings {
+    $bytes = [IO.File]::ReadAllBytes($PSCommandPath)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $text = [Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+    } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        $text = [Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+    } else {
+        try   { $text = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes) }   # strict UTF-8
+        catch { $text = [Text.Encoding]::Default.GetString($bytes) }                         # ANSI (Big5 on zh-TW)
+    }
+    $result = @{}
+    $m = [regex]::Match($text, '(?ms)^\$Settings\s*=\s*@''\r?\n(.*?)\r?\n''@')
+    if (-not $m.Success) { return $result }
+    foreach ($line in ($m.Groups[1].Value -split '\r?\n')) {
+        $line = $line.Trim()
+        if (-not $line -or $line.StartsWith('#')) { continue }
+        $i = $line.IndexOf('=')
+        if ($i -gt 0) { $result[$line.Substring(0, $i).Trim()] = $line.Substring($i + 1).Trim().Trim('"').Trim("'") }
+    }
+    return $result
+}
+
+# Parameters given on the command line win; otherwise use the SETTINGS block
+$cfg = Read-ScriptSettings
+foreach ($key in @('OutDir', 'LogDir', 'ExcludeFile', 'Days')) {
+    if (-not $PSBoundParameters.ContainsKey($key)) {
+        if (-not $cfg.ContainsKey($key) -or -not $cfg[$key]) {
+            Write-Host "[ERROR] Setting '$key' is missing in the SETTINGS block of $PSCommandPath"
+            exit 1
+        }
+        Set-Variable -Name $key -Value $cfg[$key]
+    }
+}
+$Days = [int]$Days
+
 $ErrorActionPreference = 'Continue'
-$start = (Get-Date).AddDays(-$Days)
-$date  = Get-Date -Format 'yyyyMMdd'
-New-Item -ItemType Directory -Force -Path $OutDir, $LogDir | Out-Null
+$start   = (Get-Date).AddDays(-$Days)
+$date    = Get-Date -Format 'yyyyMMdd'
+$utf8Bom = New-Object Text.UTF8Encoding($true)
+
+# Output and log folders must be usable, otherwise stop with exit code 1
+foreach ($dir in @($OutDir, $LogDir)) {
+    try {
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+            New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+        }
+    }
+    catch {
+        Write-Host "[ERROR] Cannot create or access folder: $dir"
+        Write-Host "        $($_.Exception.Message)"
+        exit 1
+    }
+}
 $logFile = Join-Path $LogDir "$date.log"
+$logBroken = $false
 
 # Level name from the level number, not LevelDisplayName (empty for some providers).
 # Chinese names are built from char codes so this file stays pure ASCII:
-# Windows PowerShell 5.1 reads a .ps1 without BOM as ANSI, which would garble Chinese literals.
 #   1 = Critical (0x91CD 0x5927), 2 = Error (0x932F 0x8AA4), 3 = Warning (0x8B66 0x544A)
 $levelNames = @{
     1 = [string][char]0x91CD + [char]0x5927
     2 = [string][char]0x932F + [char]0x8AA4
     3 = [string][char]0x8B66 + [char]0x544A
 }
-$csvHeader  = '"LevelDisplayName","Id","LogName","Message","TimeCreated","Count"'
+$csvHeader = '"LevelDisplayName","Id","LogName","Message","TimeCreated","Count"'
+
+# Write to screen and log file (UTF-8). .NET file APIs are used so any valid path works.
+function Write-Log([string]$msg) {
+    Write-Host $msg
+    try {
+        [IO.File]::AppendAllText($logFile, $msg + "`r`n", $utf8Bom)
+    }
+    catch {
+        if (-not $script:logBroken) {
+            Write-Host "[WARN] Cannot write log file $logFile : $($_.Exception.Message)"
+            $script:logBroken = $true
+        }
+    }
+}
 
 # Event IDs to drop before writing the CSV (one per line or comma separated, # = comment).
 # Missing file = nothing excluded.
 function Read-ExcludeIds {
     $ids = @{}
-    if ($ExcludeFile -and (Test-Path $ExcludeFile)) {
-        Get-Content $ExcludeFile | ForEach-Object { ($_ -split '#')[0] -split '[,\s]+' } |
+    if ($ExcludeFile -and (Test-Path -LiteralPath $ExcludeFile -PathType Leaf)) {
+        Get-Content -LiteralPath $ExcludeFile | ForEach-Object { ($_ -split '#')[0] -split '[,\s]+' } |
             ForEach-Object { $_.Trim().Trim('"') } | Where-Object { $_ } |
             ForEach-Object { $ids[$_] = $true }
         Write-Log "Excluded event IDs: $($ids.Count) (from $ExcludeFile)"
@@ -42,11 +121,6 @@ function Read-ExcludeIds {
         Write-Log "No exclude file ($ExcludeFile), no event IDs excluded"
     }
     return $ids
-}
-
-function Write-Log([string]$msg) {
-    Write-Host $msg
-    Add-Content -Path $logFile -Value $msg -Encoding UTF8
 }
 
 # Collect events of one computer and write its CSV; $server = $null means local. Returns $true on success
@@ -103,11 +177,17 @@ function Export-ServerEvents([string]$server, [string]$name) {
     } | Sort-Object Level, Id | Select-Object LevelDisplayName, Id, LogName, Message, TimeCreated, Count)
 
     $csv = Join-Path $OutDir "${date}_$name.csv"
-    if ($rows.Count -gt 0) {
-        $rows | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
-    } else {
-        # No errors/warnings: write a header-only CSV so the check sheet gets O (no CSV = collection failed)
-        Set-Content -Path $csv -Value $csvHeader -Encoding UTF8
+    try {
+        if ($rows.Count -gt 0) {
+            $rows | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+        } else {
+            # No errors/warnings: header-only CSV so the check sheet gets O (no CSV = collection failed)
+            [IO.File]::WriteAllText($csv, $csvHeader + "`r`n", $utf8Bom)
+        }
+    }
+    catch {
+        Write-Log "  [ERROR] $name cannot write CSV $csv : $($_.Exception.Message)"
+        return $false
     }
     Write-Log "  $name : $($rows.Count) error/warning event types -> $csv (excluded $excludedCount events)"
     return $true
@@ -115,6 +195,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
 
 Write-Log ""
 Write-Log "===== EventLogCheck_Local start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (last $Days days, computer: $env:COMPUTERNAME) ====="
+Write-Log "CSV folder : $OutDir"
 $excludeIds = Read-ExcludeIds
 if (Export-ServerEvents $null $env:COMPUTERNAME) {
     Write-Log "===== EventLogCheck_Local done ====="
