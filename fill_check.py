@@ -27,7 +27,10 @@
    - 當週檔已存在（重跑）就以它為底更新，保留手動填的內容；否則從範本產生
    - 有底色的格子（灰、黑、黃…）與合併儲存格不填
    - 沒有本週 CSV 的伺服器，事件檢視器兩欄填 O O；防毒軟體欄全填 O
-   - 連結欄的文字與超連結：W2640 → 本週 W2642、_W40 → _W42
+   - 連結欄：有設定 check_sheet.link_target 時，每一列的超連結由程式產生
+     （例: //server/share/System Check/{week}/Reference/BOS，可用 {week}/{yy}/{ww}/{host}）；
+     link_text 設定顯示文字，null = 沿用範本原本文字並換週別（空白格顯示最後一層資料夾名稱）
+     沒設定 link_target 時，只把範本既有連結的 W2640 → 本週 W2642、_W40 → _W42
    - 只處理本週（或 --week 指定週）的 CSV，同一台有多次取最新日期
 
 用法:
@@ -66,6 +69,7 @@ from datetime import date, datetime
 import pandas as pd
 import openpyxl
 from openpyxl.cell.cell import MergedCell
+from openpyxl.styles import Font
 
 # ===== 讀取設定檔 =====
 # 輸出被導向檔案或非中文系統時，顯示不了的字以 ? 代替，不讓程式中斷
@@ -130,6 +134,9 @@ OUTPUT_XLSX  = _path(_cfg["check_sheet"]["output"])
 TEMPLATE_XLSX    = _path(_cfg["check_sheet"].get("template"))
 ANTIVIRUS_HEADER = _cfg["check_sheet"].get("antivirus_header")
 LINK_HEADER      = _cfg["check_sheet"].get("link_header")
+# 連結規則：有設定 link_target 時，每一列的超連結由程式產生（可用 {week}/{yy}/{ww}/{host}）
+LINK_TARGET      = _cfg["check_sheet"].get("link_target")
+LINK_TEXT        = _cfg["check_sheet"].get("link_text")
 
 TRACK_SHEET      = _cfg["track"]["sheet"]
 TRACK_HEADER_ROW = _cfg["track"].get("header_row", 1)
@@ -314,6 +321,29 @@ def fill_check_row(ws, cols, r, df, ignore_ids, host):
 
 
 HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+HYPERLINK_FORMULA_TEXT = re.compile(r',\s*"([^"]*)"\s*\)\s*$')
+
+
+def set_link(cell, host, week):
+    """依 link_target / link_text 規則設定超連結；link_text 為 null 時沿用格子原本文字（換週別）"""
+    render = lambda s: week_path(s, week).replace("{host}", host)
+    target = render(LINK_TARGET).replace("/", "\\")
+    old = cell.value if isinstance(cell.value, str) else ""
+    if LINK_TEXT:
+        text = render(LINK_TEXT)
+    elif old.upper().startswith("=HYPERLINK("):
+        m = HYPERLINK_FORMULA_TEXT.search(old)  # =HYPERLINK("路徑","顯示文字") 取顯示文字
+        text = update_week_tokens(m.group(1), week) if m else target.rstrip("\\").split("\\")[-1]
+    elif old.strip():
+        text = update_week_tokens(old, week)
+    else:
+        text = target.rstrip("\\").split("\\")[-1]  # 空白格顯示最後一層資料夾名稱，例: BOS
+    cell.value = text
+    cell.hyperlink = target
+    f = cell.font
+    if not f.underline:  # 沒有連結樣式時改成藍字底線，其他字型設定保留
+        cell.font = Font(name=f.name, size=f.size, bold=f.bold, italic=f.italic,
+                         underline="single", color="FF0563C1")
 
 
 def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week):
@@ -334,6 +364,9 @@ def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week):
         if LINK_HEADER:
             cell = ws.cell(row=r, column=cols[LINK_HEADER])
             if is_shaded(cell):
+                continue
+            if LINK_TARGET:
+                set_link(cell, host, week)
                 continue
             if isinstance(cell.value, str):
                 cell.value = update_week_tokens(cell.value, week)

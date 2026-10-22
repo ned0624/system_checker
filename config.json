@@ -22,7 +22,9 @@
         "error_header": "事件檢視器\n系統錯誤",
         "note_header": "備註",
         "antivirus_header": "防毒軟體",
-        "link_header": "連結"
+        "link_header": "連結",
+        "link_target": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/Reference/BOS",
+        "link_text": null
     },
     "track": {
         "sheet": "事件檢視器_BOS",

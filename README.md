@@ -135,6 +135,8 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
     "output": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/BOS_系統穩定健檢狀態記錄表_{week}.xlsx",
     "antivirus_header": "防毒軟體",
     "link_header": "連結",
+    "link_target": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/Reference/BOS",
+    "link_text": null,
     ...
 }
 ```
@@ -144,7 +146,14 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
 - **有底色的格子**（灰、黑、黃色分隔列…）與合併儲存格一律不填
 - 有本週 CSV 的伺服器：依事件填 O/X 與備註；**沒有本週 CSV 的伺服器：事件檢視器兩欄填 O O**（全部被排除或撈取失敗都會是 O，請看撈取 log 確認失敗的伺服器）
 - 防毒軟體欄全部填 O
-- 連結欄的顯示文字與超連結目標：`W2640` → 本週 `W2642`、`_W40` → `_W42`
+- 連結欄：設定 `link_target` 時，每一列的超連結由程式產生，例如只連到當週的 BOS 資料夾：
+  ```json
+  "link_target": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/Reference/BOS",
+  "link_text": null
+  ```
+  可用 `{week}`（W2642）、`{yy}`、`{ww}`、`{host}`（該列伺服器名稱）。
+  `link_text` 是格子顯示的文字（例：`"BOS - {host}_Evidence_W{ww}"`）；`null` = 沿用範本原本的文字並換週別，空白格顯示 `BOS`。
+  有底色的連結格不會加連結。不設定 `link_target` 時，只把範本既有連結的 `W2640` → `W2642`、`_W40` → `_W42`
 - 只處理**本週**的 CSV（今天所在的 ISO 週）；補跑其他週用 `python fill_check.py --week W2641`
 - 不設定 `template` 時維持原本行為（直接改 `paths.check_xlsx`），但一樣只處理本週的 CSV
 

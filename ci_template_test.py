@@ -17,6 +17,8 @@ from openpyxl.styles.colors import Color
 from openpyxl.worksheet.hyperlink import Hyperlink
 
 tmp = os.path.abspath(sys.argv[1])
+# mode: weekswap (no link_target) / rule (link_target, link_text null) / ruletext (link_target + link_text)
+MODE = sys.argv[2] if len(sys.argv) > 2 else "weekswap"
 os.makedirs(tmp, exist_ok=True)
 app = os.path.join(tmp, "app")
 os.makedirs(app, exist_ok=True)
@@ -41,6 +43,7 @@ ws.append(["SRV-E", "Ned"])                  # row 7
 for c in "CDE":
     ws[f"{c}4"].fill = GRAY                  # SRV-C: event + antivirus gray
 ws["E5"].fill = THEME_GRAY                   # SRV-D: antivirus theme gray
+ws["G5"].fill = GRAY                         # SRV-D: link cell gray -> no link
 ws["C7"].fill = BLACK                        # SRV-E: error column black
 ws["D2"].fill = WHITE                        # explicit white is still fillable
 for c in "ABCDEFGH":
@@ -84,6 +87,10 @@ cfg = {
               "ignore_header": "可忽略", "output": None},
     "log_dir": os.path.join(tmp, "logs"),
 }
+LINK_ROOT = os.path.join(tmp, "share")
+if MODE in ("rule", "ruletext"):
+    cfg["check_sheet"]["link_target"] = LINK_ROOT.replace("\\", "/") + "/{week}/Reference/BOS"
+    cfg["check_sheet"]["link_text"] = "BOS - {host}_Evidence_W{ww}" if MODE == "ruletext" else None
 json.dump(cfg, open(os.path.join(app, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 
@@ -116,10 +123,23 @@ assert all(v(f"{c}6") is None for c in "BCDEFGH"), [v(f"{c}6") for c in "BCDEFGH
 assert v("C7") is None and v("D7") == "O" and v("E7") == "O", (v("C7"), v("D7"), v("E7"))
 # antivirus O on normal rows
 assert [v(f"E{r}") for r in (2, 3)] == ["O", "O"]
-# links updated
-assert v("G2") == "SRV-A_Evidence_W42", v("G2")
-assert "\\W2642\\" in ws["G2"].hyperlink.target and "_W42.docx" in ws["G2"].hyperlink.target, ws["G2"].hyperlink.target
-assert "\\W2642\\" in v("G3") and "SRV-B_Evidence_W42" in v("G3") and "W2640" not in v("G3"), v("G3")
+# links
+if MODE == "weekswap":
+    assert v("G2") == "SRV-A_Evidence_W42", v("G2")
+    assert "\\W2642\\" in ws["G2"].hyperlink.target and "_W42.docx" in ws["G2"].hyperlink.target, ws["G2"].hyperlink.target
+    assert "\\W2642\\" in v("G3") and "SRV-B_Evidence_W42" in v("G3") and "W2640" not in v("G3"), v("G3")
+else:
+    folder = (LINK_ROOT.replace("/", "\\") + "\\W2642\\Reference\\BOS")
+    for ref, host in (("G2", "SRV-A"), ("G3", "SRV-B"), ("G4", "SRV-C"), ("G7", "SRV-E")):
+        assert ws[ref].hyperlink is not None and ws[ref].hyperlink.target == folder, (ref, ws[ref].hyperlink and ws[ref].hyperlink.target)
+    assert ws["G5"].hyperlink is None and v("G5") is None, "gray link cell must stay empty"
+    if MODE == "rule":
+        assert v("G2") == "SRV-A_Evidence_W42", v("G2")     # existing text, week updated
+        assert v("G3") == "SRV-B_Evidence_W42", v("G3")     # HYPERLINK formula -> its text, week updated
+        assert v("G4") == "BOS" and v("G7") == "BOS", (v("G4"), v("G7"))  # blank -> folder name
+    else:
+        assert v("G2") == "BOS - SRV-A_Evidence_W42" and v("G7") == "BOS - SRV-E_Evidence_W42", (v("G2"), v("G7"))
+    assert ws["G4"].font.underline == "single", ws["G4"].font.underline
 # tracking sheet: only this week's CSV pasted
 trs = openpyxl.load_workbook(track)["事件檢視器_BOS"]
 pasted = [(r[0], r[1]) for r in trs.iter_rows(min_row=2, values_only=True) if r[0]]
@@ -132,5 +152,6 @@ wb.save(out)
 run()
 ws = openpyxl.load_workbook(out).active
 assert ws["F2"].value == "manual 30%", ws["F2"].value
-assert ws["G2"].value == "SRV-A_Evidence_W42" and ws["C2"].value == "X"
-print("TEMPLATE TEST OK")
+assert ws["C2"].value == "X"
+assert ws["G2"].value == ("BOS - SRV-A_Evidence_W42" if MODE == "ruletext" else "SRV-A_Evidence_W42"), ws["G2"].value
+print(f"TEMPLATE TEST OK ({MODE})")

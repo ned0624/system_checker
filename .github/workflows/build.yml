@@ -36,8 +36,10 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          python ci_template_test.py "$env:RUNNER_TEMP\tpl"
-          if ($LASTEXITCODE -ne 0) { throw "template test failed" }
+          foreach ($m in 'weekswap', 'rule', 'ruletext') {
+            python ci_template_test.py "$env:RUNNER_TEMP\tpl_$m" $m
+            if ($LASTEXITCODE -ne 0) { throw "template test ($m) failed" }
+          }
 
       - name: Check .bat.txt copies are in sync
         shell: bash
