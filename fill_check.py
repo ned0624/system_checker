@@ -54,6 +54,9 @@
     track.columns                             追蹤表標題 → CSV 欄位名稱
     track.ignore_header                       可忽略欄的標題，null = 不填
     track.output                              另存路徑，null = 直接覆寫追蹤表
+    wait_if_open.retry_seconds / max_wait_minutes
+                                              Excel 被別人開著時，每幾秒重試、最多等幾分鐘（0 = 不等）；
+                                              超時未存檔以結束碼 3 結束，重跑是安全的
     log_dir                                   log 資料夾，省略 = logs（依日期命名，例: 20261016.log；同一天多次執行附加在同一檔）
     路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
     JSON 裡的反斜線要寫兩次（\\），或改用正斜線 /
@@ -64,6 +67,7 @@ import glob
 import json
 import os
 import re
+import time
 import traceback
 from datetime import date, datetime
 import pandas as pd
@@ -151,6 +155,12 @@ TRACK_ID_HEADER  = next((h for h, c in TRACK_COLUMNS.items() if c == CSV_ID_COLU
 TRACK_OUTPUT = _path(_cfg["track"]["output"])
 
 LOG_DIR = _path(_cfg.get("log_dir") or "logs")
+
+# Excel 被別人開著（鎖住）時：每 retry_seconds 秒重試，最多等 max_wait_minutes 分鐘（0 = 不等）
+_wait = _cfg.get("wait_if_open") or {}
+RETRY_SECONDS    = float(_wait.get("retry_seconds", 300))
+MAX_WAIT_MINUTES = float(_wait.get("max_wait_minutes", 120))
+EXIT_LOCKED = 3
 # ======================
 
 # 事件等級（CSV 等級欄位的值，不分大小寫）；不在這兩組的等級（例: 資訊）一律不讀
@@ -310,14 +320,12 @@ def check_csv(df, ignore_ids):
     return has_warn, has_error, "\n".join(notes)
 
 
-def fill_check_row(ws, cols, r, df, ignore_ids, host):
-    has_warn, has_error, note = check_csv(df, ignore_ids)
+def write_check_row(ws, cols, r, has_warn, has_error, note):
+    """把 check_csv 的結果寫進檢核表一列（有底色的格子不寫）"""
     set_cell(ws, r, cols[WARN_HEADER], "X" if has_warn else "O")
     set_cell(ws, r, cols[ERROR_HEADER], "X" if has_error else "O")
     if set_cell(ws, r, cols[NOTE_HEADER], note or None) and note:
         ws.cell(row=r, column=cols[NOTE_HEADER]).alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
-    print(f"  Check sheet: warning={'X' if has_warn else 'O'} error={'X' if has_error else 'O'}"
-          + (f"\n    {note.replace(chr(10), chr(10) + '    ')}" if note else ""))
 
 
 HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -496,6 +504,8 @@ def save(wb, path):
             os.makedirs(folder, exist_ok=True)
         wb.save(path)
     except PermissionError as e:
+        if is_locked(path):
+            raise _Locked(path)
         print(f"[ERROR] Cannot write {path}: {e}")
         print(f"        Close the file if it is open in Excel. Otherwise account {account()} needs Modify permission on the folder.")
         sys.exit(1)
@@ -504,6 +514,66 @@ def save(wb, path):
         print(f"        Check the path and that account {account()} can access and write to the folder.")
         sys.exit(1)
     print(f"Saved: {path}")
+
+
+def is_locked(path):
+    """檔案被別的程式（例如 Excel）開著而無法寫入 → True；檔案不存在 → False"""
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r+b"):
+            return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def lock_owner(path):
+    """Excel 開檔時會建立 ~$檔名，裡面第 1 byte 是名字長度、接著是開啟者名字"""
+    folder, name = os.path.split(path)
+    for owner_file in ("~$" + name, "~$" + name[2:]):
+        try:
+            with open(os.path.join(folder, owner_file), "rb") as f:
+                b = f.read(165)
+        except OSError:
+            continue
+        if b and 0 < b[0] < len(b):
+            raw = b[1:1 + b[0]]
+            for enc in ("mbcs", "cp950", "latin-1"):
+                try:
+                    return raw.decode(enc).strip()
+                except (LookupError, UnicodeDecodeError):
+                    continue
+    return None
+
+
+def write_when_free(label, out_path, build):
+    """等 out_path 沒被開著時，呼叫 build() 讀最新檔並套用變更，立刻存檔。
+    回傳 True = 已存檔、False = 等到超時仍被開著（未存檔）"""
+    waited = 0.0
+    while True:
+        if is_locked(out_path):
+            who = lock_owner(out_path) or f"unknown user (or account {account()} has no write permission)"
+            if waited >= MAX_WAIT_MINUTES * 60:
+                print(f"[ERROR] {label} is still open by {who} after {MAX_WAIT_MINUTES:g} min - NOT saved: {out_path}")
+                print("        Run again later (safe to re-run).")
+                return False
+            print(f"[WAIT] {label} is open by {who}, retry in {RETRY_SECONDS:g} s "
+                  f"(waited {waited / 60:.0f}/{MAX_WAIT_MINUTES:g} min): {out_path}")
+            time.sleep(RETRY_SECONDS)
+            waited += RETRY_SECONDS
+            continue
+        wb = build()  # 每次都重新讀取最新的檔案，不會蓋掉別人在等待期間存的修改
+        try:
+            save(wb, out_path)
+            return True
+        except _Locked:
+            continue  # 存檔前一刻被人打開 → 回到等待
+
+
+class _Locked(Exception):
+    pass
 
 
 def parse_args(argv):
@@ -569,17 +639,9 @@ def main():
     ignore_ids = load_ignore_ids(track_xlsx)
     print(f"Ignorable event IDs: {len(ignore_ids)}")
 
-    check_wb = openpyxl.load_workbook(check_src)
-    check_ws = check_wb[CHECK_SHEET] if CHECK_SHEET else check_wb.worksheets[0]
-    cols = find_columns(check_ws, (ANTIVIRUS_HEADER, LINK_HEADER) if template_mode else ())
-    host_rows = find_host_rows(check_ws)
-    filled_rows = set()
-
-    track_wb = openpyxl.load_workbook(track_xlsx)
-    track_ws = get_track_sheet(track_wb)
-    track_cols, ignore_col = track_columns(track_ws)
-
+    # ---- 1. 先讀 CSV、算出結果（不碰 Excel）----
     problems = []  # (檔名, 狀況) 最後彙總
+    results = []   # dict(host, week, fname, df, check=(有警告, 有錯誤, 備註) 或 None)
     for path in csv_files:
         host, d = parse_filename(path)
         fname = os.path.basename(path)
@@ -596,36 +658,67 @@ def main():
                    f"(re-collect with the latest EventLogCheck.ps1)")
             print(f"  [WARN] {msg}")
             problems.append((fname, f"WARN: {msg}"))
+        try:
+            check = check_csv(df, ignore_ids)
+            has_warn, has_error, note = check
+            print(f"  Check sheet: warning={'X' if has_warn else 'O'} error={'X' if has_error else 'O'}"
+                  + (f"\n    {note.replace(chr(10), chr(10) + '    ')}" if note else ""))
+        except Exception as e:
+            check = None
+            print(f"  [ERROR] Check sheet: {e}")
+            problems.append((fname, f"ERROR: O/X not filled ({e})"))
+        results.append(dict(host=host, week=week_label(d), fname=fname, df=df, check=check))
 
-        r = host_rows.get(host.upper())
-        if r is None:
-            print("  [SKIP] Server not found in first column of check sheet")
-            problems.append((fname, "SKIP: server not in check sheet, O/X not filled (tracking sheet still pasted)"))
-        else:
-            try:
-                fill_check_row(check_ws, cols, r, df, ignore_ids, host)
+    # ---- 2. 檢核表：等沒人開著 → 讀最新檔 → 套用 → 立刻存檔 ----
+    def build_check():
+        src = check_output if template_mode and os.path.isfile(check_output) else check_src
+        wb = openpyxl.load_workbook(src)
+        ws = wb[CHECK_SHEET] if CHECK_SHEET else wb.worksheets[0]
+        cols = find_columns(ws, (ANTIVIRUS_HEADER, LINK_HEADER) if template_mode else ())
+        host_rows = find_host_rows(ws)
+        filled_rows = set()
+        missing = []
+        for res in results:
+            r = host_rows.get(res["host"].upper())
+            if r is None:
+                missing.append(res["fname"])
+            elif res["check"] is not None:
+                write_check_row(ws, cols, r, *res["check"])
                 filled_rows.add(r)
-            except Exception as e:
-                print(f"  [ERROR] Check sheet: {e}")
-                problems.append((fname, f"ERROR: O/X not filled ({e})"))
+        build_check.missing = missing
+        if template_mode:
+            no_csv = finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week)
+            print(f"Check sheet: antivirus = O, links updated to {week}")
+            if no_csv:
+                print(f"Servers without a {week} CSV, event columns set to O O: {', '.join(no_csv)}")
+        return wb
 
-        paste_csv(track_ws, track_cols, df, host, week_label(d))
+    check_ok = write_when_free("Check sheet", check_output, build_check)
+    for fname in getattr(build_check, "missing", []):
+        print(f"  [SKIP] {fname}: server not found in first column of check sheet")
+        problems.append((fname, "SKIP: server not in check sheet, O/X not filled (tracking sheet still pasted)"))
 
-    if TRACK_ID_HEADER:
-        fill_ignore_marks(track_ws, track_cols, ignore_col, ignore_ids)
+    # ---- 3. 追蹤表：同樣等沒人開著再寫 ----
+    def build_track():
+        wb = openpyxl.load_workbook(track_xlsx)
+        ws = get_track_sheet(wb)
+        tcols, ignore_col = track_columns(ws)
+        for res in results:
+            print(res["host"])
+            paste_csv(ws, tcols, res["df"], res["host"], res["week"])
+        if TRACK_ID_HEADER:
+            fill_ignore_marks(ws, tcols, ignore_col, ignore_ids)
+        return wb
 
-    if template_mode:
-        no_csv = finalize_weekly_sheet(check_ws, cols, host_rows, filled_rows, week)
-        print(f"Check sheet: antivirus = O, links updated to {week}")
-        if no_csv:
-            print(f"Servers without a {week} CSV, event columns set to O O: {', '.join(no_csv)}")
-
-    save(check_wb, check_output)
-    save(track_wb, track_output)
+    track_ok = write_when_free("Tracking file", track_output, build_track)
 
     print(f"\n===== Done: {len(csv_files)} CSV files, {len(problems)} with problems =====")
     for fname, msg in problems:
         print(f"  {fname}: {msg}")
+    if not (check_ok and track_ok):
+        not_saved = [n for n, ok in (("check sheet", check_ok), ("tracking file", track_ok)) if not ok]
+        print(f"[ERROR] Not saved because the file was open: {', '.join(not_saved)}")
+        sys.exit(EXIT_LOCKED)
 
 
 class _Tee:

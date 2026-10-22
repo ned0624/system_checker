@@ -124,7 +124,7 @@ assert v("C7") is None and v("D7") == "O" and v("E7") == "O", (v("C7"), v("D7"),
 # antivirus O on normal rows
 assert [v(f"E{r}") for r in (2, 3)] == ["O", "O"]
 # links
-if MODE == "weekswap":
+if MODE in ("weekswap", "locked"):
     assert v("G2") == "SRV-A_Evidence_W42", v("G2")
     assert "\\W2642\\" in ws["G2"].hyperlink.target and "_W42.docx" in ws["G2"].hyperlink.target, ws["G2"].hyperlink.target
     assert "\\W2642\\" in v("G3") and "SRV-B_Evidence_W42" in v("G3") and "W2640" not in v("G3"), v("G3")
@@ -155,3 +155,103 @@ assert ws["F2"].value == "manual 30%", ws["F2"].value
 assert ws["C2"].value == "X"
 assert ws["G2"].value == ("BOS - SRV-A_Evidence_W42" if MODE == "ruletext" else "SRV-A_Evidence_W42"), ws["G2"].value
 print(f"TEMPLATE TEST OK ({MODE})")
+
+if MODE != "locked":
+    sys.exit(0)
+
+# ===== locked: the weekly file is open by someone =====
+import contextlib
+import io
+import time
+
+owner = os.path.join(os.path.dirname(out), "~$" + os.path.basename(out))
+open(owner, "wb").write(bytes([8]) + b"TestUser" + b" " * 46)   # Excel owner file format
+
+# --- A. simulated lock (any OS): locked twice, another user saves an edit meanwhile -> edit kept ---
+sys.path.insert(0, app)
+import fill_check as fc   # noqa: E402  (reads app/config.json)
+real_is_locked = fc.is_locked
+calls = {"n": 0}
+
+
+def fake_is_locked(path):
+    if os.path.abspath(path) == os.path.abspath(out) and calls["n"] < 2:
+        calls["n"] += 1
+        if calls["n"] == 1:   # someone edits and saves while we wait
+            wb2 = openpyxl.load_workbook(out)
+            wb2.active["F4"] = "edited while waiting"
+            wb2.save(out)
+        return True
+    return real_is_locked(path)
+
+
+fc.is_locked = fake_is_locked
+fc.time.sleep = lambda s: None
+fc.RETRY_SECONDS, fc.MAX_WAIT_MINUTES = 1, 1
+buf = io.StringIO()
+sys.argv = ["fill_check.py", "--week", "W2642"]
+with contextlib.redirect_stdout(buf):
+    try:
+        fc.main()
+        code = 0
+    except SystemExit as e:
+        code = e.code or 0
+log = buf.getvalue()
+print(log)
+assert code == 0, code
+assert log.count("[WAIT] Check sheet is open by TestUser") == 2, log
+ws = openpyxl.load_workbook(out).active
+assert ws["F4"].value == "edited while waiting", "edit saved during the wait was overwritten"
+assert ws["F2"].value == "manual 30%" and ws["C2"].value == "X"
+
+# --- B. simulated timeout: still locked -> exit 3, file untouched ---
+fc.is_locked = lambda path: os.path.abspath(path) == os.path.abspath(out) or real_is_locked(path)
+fc.MAX_WAIT_MINUTES = 0
+before = open(out, "rb").read()
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    try:
+        fc.main()
+        code = 0
+    except SystemExit as e:
+        code = e.code or 0
+print(buf.getvalue())
+assert code == 3, code
+assert "still open by TestUser" in buf.getvalue() and "NOT saved" in buf.getvalue()
+assert open(out, "rb").read() == before, "locked file must not be modified"
+print("SIMULATED LOCK OK")
+
+# --- C. real exclusive lock held by another process (Windows only) ---
+if os.name == "nt":
+    def hold_lock(seconds):
+        ps = (f"$f=[IO.File]::Open('{out}','Open','ReadWrite','None'); "
+              f"Start-Sleep -Seconds {seconds}; $f.Close()")
+        p = subprocess.Popen(["powershell", "-NoProfile", "-Command", ps])
+        for _ in range(50):           # wait until the lock is really held
+            if real_is_locked(out):
+                return p
+            time.sleep(0.2)
+        raise AssertionError("could not lock the file")
+
+    def run_with_wait(retry, max_min):
+        cfg["wait_if_open"] = {"retry_seconds": retry, "max_wait_minutes": max_min}
+        json.dump(cfg, open(os.path.join(app, "config.json"), "w", encoding="utf-8"), ensure_ascii=False)
+        r = subprocess.run([sys.executable, os.path.join(app, "fill_check.py"), "--week", "W2642"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+        print(r.stdout, r.stderr)
+        return r
+
+    p = hold_lock(12)
+    r = run_with_wait(3, 1)                       # waits ~12 s, then saves
+    p.wait()
+    assert r.returncode == 0 and "[WAIT] Check sheet is open by TestUser" in r.stdout and "Saved:" in r.stdout, r.returncode
+
+    p = hold_lock(30)
+    r = run_with_wait(2, 0.1)                     # gives up after 6 s
+    p.kill()
+    assert r.returncode == 3 and "NOT saved" in r.stdout, r.returncode
+    print("REAL LOCK OK")
+
+os.remove(owner)
+print("LOCK TEST OK")

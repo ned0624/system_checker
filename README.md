@@ -157,6 +157,22 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
 - 只處理**本週**的 CSV（今天所在的 ISO 週）；補跑其他週用 `python fill_check.py --week W2641`
 - 不設定 `template` 時維持原本行為（直接改 `paths.check_xlsx`），但一樣只處理本週的 CSV
 
+### Excel 被別人開著時
+
+Excel 開著檔案時會鎖住，任何程式都寫不進去。fill_check 會：
+
+- 先把 CSV 結果算好，再**等檔案沒人開著**才寫入：每 5 分鐘檢查一次，畫面與 log 顯示是誰開著
+  （`[WAIT] Check sheet is open by 王小明, retry in 300 s (waited 10/120 min)`）
+- 等到可以寫入時**重新讀取最新的檔案**再套用、立刻存檔，不會蓋掉別人在等待期間存的修改
+- 超過 2 小時仍被開著：不存檔，顯示 `NOT saved`，以結束碼 3 結束（`run_weekly.bat` 會提示稍後再跑，重跑是安全的）
+
+設定（config.json，可省略）：
+```json
+"wait_if_open": { "retry_seconds": 300, "max_wait_minutes": 120 }
+```
+`max_wait_minutes` 設 `0` 表示不等待。建議用 Windows 工作排程器把 `run_weekly.bat` 排在**下班後或清晨**，
+大家都沒開檔案的時段，最不容易遇到被鎖住。
+
 ### 4. 程式處理內容
 
 對每一個 CSV：

@@ -41,7 +41,10 @@ if exist "%BASE%\fill_check\fill_check.exe" (
     )
     python "%BASE%\fill_check.py"
 )
-if errorlevel 1 (
+REM fill_check exit code 3 = an Excel file stayed open by someone longer than wait_if_open allows
+if errorlevel 3 (
+    echo [ERROR] An Excel file was open by someone - not updated. Run again later, it is safe to re-run.
+) else if errorlevel 1 (
     echo [ERROR] fill_check did not finish. See its log.
 ) else (
     echo Done.

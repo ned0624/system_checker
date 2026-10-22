@@ -36,7 +36,7 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          foreach ($m in 'weekswap', 'rule', 'ruletext') {
+          foreach ($m in 'weekswap', 'rule', 'ruletext', 'locked') {
             python ci_template_test.py "$env:RUNNER_TEMP\tpl_$m" $m
             if ($LASTEXITCODE -ne 0) { throw "template test ($m) failed" }
           }

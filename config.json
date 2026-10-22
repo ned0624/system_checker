@@ -40,5 +40,9 @@
         "ignore_header": "可忽略",
         "output": null
     },
-    "log_dir": "D:/SystemCheck/logs"
+    "log_dir": "D:/SystemCheck/logs",
+    "wait_if_open": {
+        "retry_seconds": 300,
+        "max_wait_minutes": 120
+    }
 }
