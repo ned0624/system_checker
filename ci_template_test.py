@@ -223,24 +223,26 @@ print("SIMULATED LOCK OK")
 
 # --- C. real exclusive lock held by another process (Windows only) ---
 if os.name == "nt":
-    marker = out + ".locked"
+    import ctypes
+    import threading
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
 
     def hold_lock(seconds):
-        if os.path.exists(marker):
-            os.remove(marker)
-        # another process opens the file without sharing (like Excel), then writes a marker
-        ps = (f"$f=[IO.File]::Open('{out}','Open','ReadWrite','None'); "
-              f"Set-Content -LiteralPath '{marker}' 'held'; "
-              f"Start-Sleep -Seconds {seconds}; $f.Close()")
-        p = subprocess.Popen(["powershell", "-NoProfile", "-Command", ps])
-        for _ in range(300):          # PowerShell may start slowly
-            if os.path.exists(marker) or p.poll() is not None:
-                break
-            time.sleep(0.2)
-        assert os.path.exists(marker), f"lock holder did not start (exit {p.poll()})"
+        """Open the file like Excel does (others may read, nobody else may write); release after N s"""
+        GENERIC_RW, FILE_SHARE_READ, OPEN_EXISTING = 0xC0000000, 1, 3
+        h = k32.CreateFileW(out, GENERIC_RW, FILE_SHARE_READ, None, OPEN_EXISTING, 0x80, None)
+        assert h not in (None, wintypes.HANDLE(-1).value), f"CreateFileW failed: {ctypes.get_last_error()}"
         assert real_is_locked(out), "file is held exclusively but is_locked() returned False"
-        print("lock held by another process, is_locked() = True")
-        return p
+        print("lock held, is_locked() = True")
+        timer = threading.Timer(seconds, k32.CloseHandle, args=(h,))
+        timer.start()
+        return timer
 
     def run_with_wait(retry, max_min):
         cfg["wait_if_open"] = {"retry_seconds": retry, "max_wait_minutes": max_min}
@@ -251,14 +253,16 @@ if os.name == "nt":
         print(r.stdout, r.stderr)
         return r
 
-    p = hold_lock(12)
+    timer = hold_lock(12)
     r = run_with_wait(3, 1)                       # waits ~12 s, then saves
-    p.wait()
+    timer.join()
     assert r.returncode == 0 and "[WAIT] Check sheet is open by TestUser" in r.stdout and "Saved:" in r.stdout, r.returncode
 
-    p = hold_lock(30)
+    before = open(out, "rb").read()
+    timer = hold_lock(15)
     r = run_with_wait(2, 0.1)                     # gives up after 6 s
-    p.kill()
+    timer.join()
+    assert open(out, "rb").read() == before, "locked file must not be modified"
     assert r.returncode == 3 and "NOT saved" in r.stdout, r.returncode
     print("REAL LOCK OK")
 
