@@ -223,15 +223,24 @@ print("SIMULATED LOCK OK")
 
 # --- C. real exclusive lock held by another process (Windows only) ---
 if os.name == "nt":
+    marker = out + ".locked"
+
     def hold_lock(seconds):
+        if os.path.exists(marker):
+            os.remove(marker)
+        # another process opens the file without sharing (like Excel), then writes a marker
         ps = (f"$f=[IO.File]::Open('{out}','Open','ReadWrite','None'); "
+              f"Set-Content -LiteralPath '{marker}' 'held'; "
               f"Start-Sleep -Seconds {seconds}; $f.Close()")
         p = subprocess.Popen(["powershell", "-NoProfile", "-Command", ps])
-        for _ in range(50):           # wait until the lock is really held
-            if real_is_locked(out):
-                return p
+        for _ in range(300):          # PowerShell may start slowly
+            if os.path.exists(marker) or p.poll() is not None:
+                break
             time.sleep(0.2)
-        raise AssertionError("could not lock the file")
+        assert os.path.exists(marker), f"lock holder did not start (exit {p.poll()})"
+        assert real_is_locked(out), "file is held exclusively but is_locked() returned False"
+        print("lock held by another process, is_locked() = True")
+        return p
 
     def run_with_wait(retry, max_min):
         cfg["wait_if_open"] = {"retry_seconds": retry, "max_wait_minutes": max_min}
