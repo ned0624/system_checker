@@ -36,7 +36,7 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          foreach ($m in 'weekswap', 'rule', 'ruletext', 'locked') {
+          foreach ($m in 'weekswap', 'rule', 'ruletext', 'locked', 'weekdir') {
             python ci_template_test.py "$env:RUNNER_TEMP\tpl_$m" $m
             if ($LASTEXITCODE -ne 0) { throw "template test ($m) failed" }
           }
@@ -61,6 +61,29 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errs) | Out-Null
             if ($errs) { $errs | ForEach-Object { Write-Output "$f : $_" }; throw "syntax error in $f" }
           }
+
+      - name: ISO week in ps1 matches Python, and {week} in OutDir
+        shell: powershell
+        run: |
+          # load Get-IsoWeek from the script itself
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\EventLogCheck_Local.ps1), [ref]$null, [ref]$null)
+          $fn = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Get-IsoWeek' }, $true)
+          Invoke-Expression $fn[0].Extent.Text
+          $cases = @{ '2024-12-30'='W2501'; '2026-12-31'='W2653'; '2027-01-01'='W2653'; '2027-01-04'='W2701';
+                      '2026-10-22'='W2643'; '2026-01-01'='W2601'; '2020-12-31'='W2053'; '2021-01-03'='W2053' }
+          foreach ($k in $cases.Keys) {
+            $got = Get-IsoWeek ([datetime]::ParseExact($k, 'yyyy-MM-dd', $null))
+            Write-Output "$k -> $got"
+            if ($got -ne $cases[$k]) { throw "Get-IsoWeek($k) = $got, expected $($cases[$k])" }
+          }
+          $py = python -c "from datetime import date; y,w,_=date.today().isocalendar(); print(f'W{y%100:02d}{w:02d}')"
+          $ps = Get-IsoWeek (Get-Date)
+          if ($py -ne $ps) { throw "today: python $py vs ps1 $ps" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir "$env:RUNNER_TEMP\wk\{week}\Reference\BOS" -LogDir "$env:RUNNER_TEMP\wk\logs" -ExcludeFile "$env:RUNNER_TEMP\none.txt"
+          if ($LASTEXITCODE -ne 0) { throw "ps1 with {week} failed: $LASTEXITCODE" }
+          $csv = Get-ChildItem "$env:RUNNER_TEMP\wk\$ps\Reference\BOS" -Filter *.csv
+          if (-not $csv) { throw "CSV not written to week folder $ps" }
+          Write-Output "CSV in week folder: $($csv.FullName)"
 
       - name: Run local version (explicit parameters)
         shell: powershell

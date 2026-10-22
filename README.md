@@ -142,6 +142,10 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
 ```
 
 - `output` 路徑可用 `{week}`（W2642）、`{yy}`（26）、`{ww}`（42），週別資料夾不存在會自動建立
+- CSV 也可以放在每週的資料夾：ps1 SETTINGS 的 `OutDir` 與 config.json 的 `paths.csv_dir` 都可以寫 `{week}`，例如
+  `Z:\Supporting_Org\資訊及通訊技術處\80 品質管理\System Check\{week}\Reference\BOS`。兩邊用同一套 ISO 週別（週一到週日），
+  ps1 依執行當天、fill_check 依今天（或 `--week`）換成 `W2643`
+- 網路磁碟機代號（例如 `Z:`）只在使用者登入時存在；工作排程器設成「不論使用者是否登入都執行」時，請改用 `\\伺服器\共用` 的 UNC 路徑
 - 當週檔已存在（重跑）就以它為底更新，手動填的 CPU、Memory 等欄位會保留；不存在才從範本產生
 - **有底色的格子**（灰、黑、黃色分隔列…）與合併儲存格一律不填
 - 有本週 CSV 的伺服器：依事件填 O/X 與備註；**沒有本週 CSV 的伺服器：事件檢視器兩欄填 O O**（全部被排除或撈取失敗都會是 O，請看撈取 log 確認失敗的伺服器）

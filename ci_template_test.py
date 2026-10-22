@@ -18,6 +18,7 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 
 tmp = os.path.abspath(sys.argv[1])
 # mode: weekswap (no link_target) / rule (link_target, link_text null) / ruletext (link_target + link_text)
+#       locked (file open by someone) / weekdir (paths.csv_dir contains {week})
 MODE = sys.argv[2] if len(sys.argv) > 2 else "weekswap"
 os.makedirs(tmp, exist_ok=True)
 app = os.path.join(tmp, "app")
@@ -68,6 +69,10 @@ wb.save(track)
 
 # ---- CSVs: SRV-A this week (W2642 = 2026-10-12..18), SRV-B only last week ----
 csv_dir = os.path.join(tmp, "csv")
+csv_setting = csv_dir
+if MODE == "weekdir":   # csv_dir with {week}: CSVs live in the week folder
+    csv_setting = os.path.join(tmp, "{week}", "csv")
+    csv_dir = os.path.join(tmp, "W2642", "csv")
 os.makedirs(csv_dir, exist_ok=True)
 hdr = "LevelDisplayName,Id,LogName,Message,TimeCreated,Count\n"
 open(os.path.join(csv_dir, "20261015_SRV-A.csv"), "w", encoding="utf-8-sig").write(
@@ -77,7 +82,7 @@ open(os.path.join(csv_dir, "20261008_SRV-B.csv"), "w", encoding="utf-8-sig").wri
 
 out_pattern = os.path.join(tmp, "out", "{week}", "BOS_{week}.xlsx")
 cfg = {
-    "paths": {"csv_dir": csv_dir, "check_xlsx": tpl, "track_xlsx": track},
+    "paths": {"csv_dir": csv_setting, "check_xlsx": tpl, "track_xlsx": track},
     "ignore_list": {"sheet": "可忽略事件ID", "id_column": "可忽略事件ID"},
     "csv": {"id_column": "Id", "level_column": "LevelDisplayName", "desc_column": "Message"},
     "check_sheet": {"sheet": None, "header_row": 1, "warn_header": "事件檢視器\n警告事件",
@@ -124,7 +129,7 @@ assert v("C7") is None and v("D7") == "O" and v("E7") == "O", (v("C7"), v("D7"),
 # antivirus O on normal rows
 assert [v(f"E{r}") for r in (2, 3)] == ["O", "O"]
 # links
-if MODE in ("weekswap", "locked"):
+if MODE in ("weekswap", "locked", "weekdir"):
     assert v("G2") == "SRV-A_Evidence_W42", v("G2")
     assert "\\W2642\\" in ws["G2"].hyperlink.target and "_W42.docx" in ws["G2"].hyperlink.target, ws["G2"].hyperlink.target
     assert "\\W2642\\" in v("G3") and "SRV-B_Evidence_W42" in v("G3") and "W2640" not in v("G3"), v("G3")

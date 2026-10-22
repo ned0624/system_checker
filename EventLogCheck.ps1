@@ -20,6 +20,8 @@ param(
 # paths (\\server\share\...) are OK: the script re-reads this block from the file itself and
 # detects the file encoding (UTF-8 with/without BOM, or ANSI/Big5), so how Notepad saves
 # the file does not matter. Command-line parameters (-OutDir etc.) override these values.
+# Paths may contain {week} (W2643), {yy} (26), {ww} (43) - replaced with the ISO week of today,
+# e.g. OutDir = Z:\...\System Check\{week}\Reference\BOS
 $Settings = @'
 ServerList  = D:\SystemCheck\serverlist.txt
 OutDir      = D:\SystemCheck\EventLog
@@ -66,9 +68,28 @@ foreach ($key in @('ServerList', 'OutDir', 'LogDir', 'ExcludeFile', 'Days')) {
 }
 $Days = [int]$Days
 
+# ISO week label, e.g. 2026-10-22 -> W2643 (same rule as fill_check / Python isocalendar).
+# .NET Framework has no ISOWeek and GetWeekOfYear differs around New Year, so compute it:
+# the ISO week/year are those of the Thursday in the same Monday-Sunday week.
+function Get-IsoWeek([datetime]$d) {
+    $thu  = $d.Date.AddDays(3 - (([int]$d.DayOfWeek + 6) % 7))
+    $week = [math]::Floor(($thu.DayOfYear - 1) / 7) + 1
+    return 'W{0:D2}{1:D2}' -f ($thu.Year % 100), [int]$week
+}
+
 $ErrorActionPreference = 'Continue'
-$start   = (Get-Date).AddDays(-$Days)
-$date    = Get-Date -Format 'yyyyMMdd'
+$now     = Get-Date
+$start   = $now.AddDays(-$Days)
+$date    = $now.ToString('yyyyMMdd')
+$week    = Get-IsoWeek $now
+
+# {week} / {yy} / {ww} in paths -> this week, e.g. ...\System Check\{week}\Reference\BOS -> ...\W2643\...
+foreach ($key in @('ServerList', 'OutDir', 'LogDir', 'ExcludeFile')) {
+    $val = Get-Variable -Name $key -ValueOnly
+    if ($val) {
+        Set-Variable -Name $key -Value ($val.Replace('{week}', $week).Replace('{yy}', $week.Substring(1, 2)).Replace('{ww}', $week.Substring(3, 2)))
+    }
+}
 $utf8Bom = New-Object Text.UTF8Encoding($true)
 
 # Output and log folders must exist and be writable by this account, otherwise stop with exit code 1.
@@ -216,6 +237,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
 
 Write-Log ""
 Write-Log "===== EventLogCheck start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (last $Days days) ====="
+Write-Log "Week       : $week"
 Write-Log "Server list: $ServerList"
 Write-Log "CSV folder : $OutDir"
 $excludeIds = Read-ExcludeIds

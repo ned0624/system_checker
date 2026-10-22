@@ -38,7 +38,7 @@
     python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   （有給的參數會取代設定檔的路徑）
 
 設定檔: 與本程式同資料夾的 config.json
-    paths.csv_dir                             要讀取的 CSV 資料夾
+    paths.csv_dir                             要讀取的 CSV 資料夾（可用 {week}/{yy}/{ww}，例: .../System Check/{week}/Reference/BOS）
     paths.check_xlsx                          要填寫 O/X 的檢核表（BOS_SystemCheck.xlsx）
                                               路徑中可寫 {week}，會換成 CSV 的週別（例: BOS_..._{week}.xlsx → _W2642.xlsx）
     paths.track_xlsx                          問題追蹤表（系統檢核問題追蹤.xlsx），可忽略清單也從這裡讀
@@ -598,8 +598,13 @@ def main():
     # 目標週：預設今天所在的 ISO 週；只處理這一週的 CSV，不會誤用上週的
     week = week or week_label(date.today())
 
+    csv_setting, csv_dir = csv_dir, week_path(csv_dir, week)  # csv_dir 也可用 {week}/{yy}/{ww}
     if not os.path.isdir(csv_dir):
-        print(f"[ERROR] CSV folder not found: {csv_dir} (check paths.csv_dir in config.json)")
+        print(f"[ERROR] CSV folder not found: {csv_dir}")
+        if csv_setting != csv_dir:
+            print(f"        (paths.csv_dir in config.json = {csv_setting}, week {week})")
+        else:
+            print("        (check paths.csv_dir in config.json)")
         sys.exit(1)
     all_csv = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
     latest = {}  # 伺服器 → (日期, 路徑)；同一週有多次時取最新日期
