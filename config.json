@@ -14,12 +14,15 @@
         "desc_column": "Message"
     },
     "check_sheet": {
+        "template": "D:/SystemCheck/template/BOS_系統穩定健檢狀態記錄表_template.xlsx",
+        "output": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/BOS_系統穩定健檢狀態記錄表_{week}.xlsx",
         "sheet": null,
         "header_row": 1,
         "warn_header": "事件檢視器\n警告事件",
         "error_header": "事件檢視器\n系統錯誤",
         "note_header": "備註",
-        "output": null
+        "antivirus_header": "防毒軟體",
+        "link_header": "連結"
     },
     "track": {
         "sheet": "事件檢視器_BOS",

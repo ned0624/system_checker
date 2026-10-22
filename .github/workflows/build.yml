@@ -29,7 +29,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install pandas
+      - run: pip install pandas openpyxl
+
+      - name: fill_check template mode (weekly file from template)
+        shell: powershell
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python ci_template_test.py "$env:RUNNER_TEMP\tpl"
+          if ($LASTEXITCODE -ne 0) { throw "template test failed" }
 
       - name: Check .bat.txt copies are in sync
         shell: bash

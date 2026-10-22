@@ -125,6 +125,29 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
 
 三個路徑平常設定在 config.json 的 `paths`（見下方「設定檔」）。路徑不存在時程式會直接提示並停止。
 
+### 檢核表範本模式（每週產生完整檔案）
+
+在 config.json 的 `check_sheet` 設定 `template` 後，每次執行會產生當週的完整檢核表：
+
+```json
+"check_sheet": {
+    "template": "D:/SystemCheck/template/BOS_系統穩定健檢狀態記錄表_template.xlsx",
+    "output": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/BOS_系統穩定健檢狀態記錄表_{week}.xlsx",
+    "antivirus_header": "防毒軟體",
+    "link_header": "連結",
+    ...
+}
+```
+
+- `output` 路徑可用 `{week}`（W2642）、`{yy}`（26）、`{ww}`（42），週別資料夾不存在會自動建立
+- 當週檔已存在（重跑）就以它為底更新，手動填的 CPU、Memory 等欄位會保留；不存在才從範本產生
+- **有底色的格子**（灰、黑、黃色分隔列…）與合併儲存格一律不填
+- 有本週 CSV 的伺服器：依事件填 O/X 與備註；**沒有本週 CSV 的伺服器：事件檢視器兩欄填 O O**（全部被排除或撈取失敗都會是 O，請看撈取 log 確認失敗的伺服器）
+- 防毒軟體欄全部填 O
+- 連結欄的顯示文字與超連結目標：`W2640` → 本週 `W2642`、`_W40` → `_W42`
+- 只處理**本週**的 CSV（今天所在的 ISO 週）；補跑其他週用 `python fill_check.py --week W2641`
+- 不設定 `template` 時維持原本行為（直接改 `paths.check_xlsx`），但一樣只處理本週的 CSV
+
 ### 4. 程式處理內容
 
 對每一個 CSV：

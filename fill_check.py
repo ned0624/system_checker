@@ -22,8 +22,16 @@
    - 同一台伺服器、同一週別的舊資料會先刪除再貼上，重跑不會重複
 
 需求套件: pip install pandas openpyxl
+範本模式（config.json 的 check_sheet.template 有設定時）:
+   - 每週產生完整檢核表到 check_sheet.output（路徑可用 {week}=W2642、{yy}=26、{ww}=42，資料夾會自動建立）
+   - 當週檔已存在（重跑）就以它為底更新，保留手動填的內容；否則從範本產生
+   - 有底色的格子（灰、黑、黃…）與合併儲存格不填
+   - 沒有本週 CSV 的伺服器，事件檢視器兩欄填 O O；防毒軟體欄全填 O
+   - 連結欄的文字與超連結：W2640 → 本週 W2642、_W40 → _W42
+   - 只處理本週（或 --week 指定週）的 CSV，同一台有多次取最新日期
+
 用法:
-    python fill_check.py
+    python fill_check.py [--week W2642]
     python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   （有給的參數會取代設定檔的路徑）
 
 設定檔: 與本程式同資料夾的 config.json
@@ -57,6 +65,7 @@ import traceback
 from datetime import date, datetime
 import pandas as pd
 import openpyxl
+from openpyxl.cell.cell import MergedCell
 
 # ===== 讀取設定檔 =====
 # 輸出被導向檔案或非中文系統時，顯示不了的字以 ? 代替，不讓程式中斷
@@ -117,6 +126,10 @@ WARN_HEADER  = _cfg["check_sheet"]["warn_header"]
 ERROR_HEADER = _cfg["check_sheet"]["error_header"]
 NOTE_HEADER  = _cfg["check_sheet"]["note_header"]
 OUTPUT_XLSX  = _path(_cfg["check_sheet"]["output"])
+# 範本模式：有設定 template 時，每週從範本（或已存在的當週檔）產生完整檢核表存到 output
+TEMPLATE_XLSX    = _path(_cfg["check_sheet"].get("template"))
+ANTIVIRUS_HEADER = _cfg["check_sheet"].get("antivirus_header")
+LINK_HEADER      = _cfg["check_sheet"].get("link_header")
 
 TRACK_SHEET      = _cfg["track"]["sheet"]
 TRACK_HEADER_ROW = _cfg["track"].get("header_row", 1)
@@ -202,15 +215,56 @@ def load_ignore_ids(xlsx_path):
 
 # ---------- 檢核表 O/X ----------
 
-def find_columns(ws):
-    """依標題文字找出 警告/錯誤/備註 的欄號"""
+def find_columns(ws, optional=()):
+    """依標題文字找出 警告/錯誤/備註（以及 optional 中有設定的欄）的欄號"""
     headers = {str(c.value).strip(): c.column for c in ws[HEADER_ROW] if c.value is not None}
     cols = {}
-    for h in (WARN_HEADER, ERROR_HEADER, NOTE_HEADER):
+    for h in (WARN_HEADER, ERROR_HEADER, NOTE_HEADER) + tuple(h for h in optional if h):
         if h not in headers:
             raise KeyError(f"Check sheet: header '{h}' not found, headers: {list(headers)}")
         cols[h] = headers[h]
     return cols
+
+
+def is_shaded(cell):
+    """有底色（灰、黑、黃…）或是合併儲存格 → True，這種格子不填"""
+    if isinstance(cell, MergedCell):
+        return True
+    fill = cell.fill
+    if fill is None or fill.fill_type in (None, "none"):
+        return False
+    if fill.fill_type != "solid":
+        return True  # 花紋底色
+    c = fill.fgColor
+    if c is None:
+        return False
+    if c.type == "rgb":
+        return str(c.rgb).upper()[-6:] != "FFFFFF"
+    if c.type == "theme":
+        return not (c.theme == 0 and not c.tint)  # theme 0 = 白色
+    if c.type == "indexed":
+        return c.indexed not in (9, 64)  # 9 = 白色, 64 = 系統預設
+    return True
+
+
+def set_cell(ws, row, col, value):
+    """格子沒有底色才寫入，回傳是否有寫"""
+    cell = ws.cell(row=row, column=col)
+    if is_shaded(cell):
+        return False
+    cell.value = value
+    return True
+
+
+def update_week_tokens(text, week):
+    """W2640 → W2642、_W40 → _W42（week 例: W2642）"""
+    text = re.sub(r"W\d{4}(?!\d)", week, text)
+    return re.sub(r"(?<!\d)W\d{2}(?!\d)", "W" + week[3:5], text)
+
+
+def week_path(path, week):
+    """路徑中的 {week}/{yy}/{ww} 換成週別，例: W2642 / 26 / 42"""
+    return path.replace("{week}", week).replace("{yy}", week[1:3]).replace("{ww}", week[3:5])
 
 
 def find_host_rows(ws):
@@ -251,14 +305,44 @@ def check_csv(df, ignore_ids):
 
 def fill_check_row(ws, cols, r, df, ignore_ids, host):
     has_warn, has_error, note = check_csv(df, ignore_ids)
-    ws.cell(row=r, column=cols[WARN_HEADER]).value = "X" if has_warn else "O"
-    ws.cell(row=r, column=cols[ERROR_HEADER]).value = "X" if has_error else "O"
-    note_cell = ws.cell(row=r, column=cols[NOTE_HEADER])
-    note_cell.value = note or None
-    if note:
-        note_cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
+    set_cell(ws, r, cols[WARN_HEADER], "X" if has_warn else "O")
+    set_cell(ws, r, cols[ERROR_HEADER], "X" if has_error else "O")
+    if set_cell(ws, r, cols[NOTE_HEADER], note or None) and note:
+        ws.cell(row=r, column=cols[NOTE_HEADER]).alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
     print(f"  Check sheet: warning={'X' if has_warn else 'O'} error={'X' if has_error else 'O'}"
           + (f"\n    {note.replace(chr(10), chr(10) + '    ')}" if note else ""))
+
+
+HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week):
+    """範本模式：沒有本週 CSV 的伺服器填 O O、防毒填 O、連結改成本週；回傳沒有 CSV 而填 O O 的伺服器"""
+    no_csv = []
+    for name, r in sorted(host_rows.items(), key=lambda x: x[1]):
+        host = str(ws.cell(row=r, column=1).value).strip()
+        if not HOSTNAME_RE.match(host):
+            continue  # 分隔列等非伺服器名稱
+        if r not in filled_rows:
+            wrote = set_cell(ws, r, cols[WARN_HEADER], "O")
+            wrote = set_cell(ws, r, cols[ERROR_HEADER], "O") or wrote
+            if wrote:
+                set_cell(ws, r, cols[NOTE_HEADER], None)
+                no_csv.append(host)
+        if ANTIVIRUS_HEADER:
+            set_cell(ws, r, cols[ANTIVIRUS_HEADER], "O")
+        if LINK_HEADER:
+            cell = ws.cell(row=r, column=cols[LINK_HEADER])
+            if is_shaded(cell):
+                continue
+            if isinstance(cell.value, str):
+                cell.value = update_week_tokens(cell.value, week)
+            if cell.hyperlink is not None:
+                if cell.hyperlink.target:
+                    cell.hyperlink.target = update_week_tokens(cell.hyperlink.target, week)
+                if cell.hyperlink.display:
+                    cell.hyperlink.display = update_week_tokens(cell.hyperlink.display, week)
+    return no_csv
 
 
 # ---------- 問題追蹤表 ----------
@@ -366,55 +450,97 @@ def fill_ignore_marks(ws, cols, ignore_col, ignore_ids):
 
 # ---------- 主程式 ----------
 
+def account():
+    user = os.environ.get("USERNAME") or os.environ.get("USER") or "?"
+    domain = os.environ.get("USERDOMAIN")
+    return f"{domain}\\{user}" if domain else user
+
+
 def save(wb, path):
     try:
+        folder = os.path.dirname(path)
+        if folder and not os.path.isdir(folder):
+            os.makedirs(folder, exist_ok=True)
         wb.save(path)
-    except PermissionError:
-        print(f"[ERROR] Cannot write {path}. Close the file in Excel and run again.")
+    except PermissionError as e:
+        print(f"[ERROR] Cannot write {path}: {e}")
+        print(f"        Close the file if it is open in Excel. Otherwise account {account()} needs Modify permission on the folder.")
+        sys.exit(1)
+    except OSError as e:
+        print(f"[ERROR] Cannot write {path}: {e}")
+        print(f"        Check the path and that account {account()} can access and write to the folder.")
         sys.exit(1)
     print(f"Saved: {path}")
 
 
+def parse_args(argv):
+    """[--week W2642] [csv資料夾] [檢核表xlsx] [追蹤表xlsx]"""
+    args, week = list(argv), None
+    if "--week" in args:
+        k = args.index("--week")
+        week = args[k + 1].upper() if k + 1 < len(args) else ""
+        del args[k:k + 2]
+        if not re.fullmatch(r"W\d{4}", week):
+            print(f"[ERROR] --week must look like W2642, got '{week}'")
+            sys.exit(1)
+    return args, week
+
+
 def main():
-    csv_dir = sys.argv[1] if len(sys.argv) > 1 else CSV_DIR
-    check_xlsx = sys.argv[2] if len(sys.argv) > 2 else CHECK_XLSX
-    track_xlsx = sys.argv[3] if len(sys.argv) > 3 else TRACK_XLSX
+    args, week = parse_args(sys.argv[1:])
+    csv_dir = args[0] if len(args) > 0 else CSV_DIR
+    check_xlsx = args[1] if len(args) > 1 else CHECK_XLSX
+    track_xlsx = args[2] if len(args) > 2 else TRACK_XLSX
+    template_mode = bool(TEMPLATE_XLSX)
+    # 目標週：預設今天所在的 ISO 週；只處理這一週的 CSV，不會誤用上週的
+    week = week or week_label(date.today())
 
     if not os.path.isdir(csv_dir):
         print(f"[ERROR] CSV folder not found: {csv_dir} (check paths.csv_dir in config.json)")
         sys.exit(1)
-    csv_files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
-    if not csv_files:
-        print(f"No CSV files in folder: {csv_dir}")
+    all_csv = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
+    latest = {}  # 伺服器 → (日期, 路徑)；同一週有多次時取最新日期
+    for p in all_csv:
+        host, d = parse_filename(p)
+        if week_label(d) == week and (host.upper() not in latest or d > latest[host.upper()][0]):
+            latest[host.upper()] = (d, p)
+    csv_files = sorted(p for _, p in latest.values())
+    other = len(all_csv) - len(csv_files)
+    print(f"Week {week}: {len(csv_files)} CSV files" + (f", skipped {other} files of other weeks/older runs" if other else ""))
+    if not csv_files and not template_mode:
+        print(f"No CSV files for {week} in {csv_dir}")
         return
-    # 資料夾會累積每週的 CSV，只處理日期最新的那一批（舊週的追蹤表資料不動）
-    latest = max(parse_filename(p)[1] for p in csv_files)
-    week = week_label(latest)
-    old = [p for p in csv_files if parse_filename(p)[1] != latest]
-    csv_files = [p for p in csv_files if parse_filename(p)[1] == latest]
-    print(f"Processing {len(csv_files)} CSV files of {latest:%Y%m%d} ({week})"
-          + (f", skipped {len(old)} older files" if old else ""))
 
-    # 路徑中的 {week} 換成這批 CSV 的週別，例: BOS_..._{week}.xlsx → BOS_..._W2642.xlsx
-    check_xlsx = check_xlsx.replace("{week}", week)
-    track_xlsx = track_xlsx.replace("{week}", week)
-    check_output = (OUTPUT_XLSX or check_xlsx).replace("{week}", week)
-    track_output = (TRACK_OUTPUT or track_xlsx).replace("{week}", week)
-    for label, key, p in (("check sheet", "check_xlsx", check_xlsx), ("tracking file", "track_xlsx", track_xlsx)):
+    track_xlsx = week_path(track_xlsx, week)
+    track_output = week_path(TRACK_OUTPUT or track_xlsx, week)
+    if template_mode:
+        # 當週檔已存在（重跑）就以它為底，保留手動填的內容；否則從範本產生
+        check_output = week_path(OUTPUT_XLSX or check_xlsx, week)
+        check_src = check_output if os.path.isfile(check_output) else week_path(TEMPLATE_XLSX, week)
+    else:
+        check_src = week_path(check_xlsx, week)
+        check_output = week_path(OUTPUT_XLSX or check_src, week)
+    for label, key, p in (("check sheet", "check_sheet.template" if template_mode else "paths.check_xlsx", check_src),
+                          ("tracking file", "paths.track_xlsx", track_xlsx)):
         if not os.path.isfile(p):
-            print(f"[ERROR] {label} not found: {p} (check paths.{key} in config.json)")
+            print(f"[ERROR] {label} not found: {p} (check {key} in config.json)")
             sys.exit(1)
     print(f"CSV folder   : {csv_dir}")
-    print(f"Check sheet  : {check_xlsx}")
+    if template_mode:
+        print(f"Check sheet  : {check_src}" + ("  (existing file of this week)" if check_src == check_output else "  (template)"))
+        print(f"Output       : {check_output}")
+    else:
+        print(f"Check sheet  : {check_src}")
     print(f"Tracking file: {track_xlsx}")
 
     ignore_ids = load_ignore_ids(track_xlsx)
     print(f"Ignorable event IDs: {len(ignore_ids)}")
 
-    check_wb = openpyxl.load_workbook(check_xlsx)
+    check_wb = openpyxl.load_workbook(check_src)
     check_ws = check_wb[CHECK_SHEET] if CHECK_SHEET else check_wb.worksheets[0]
-    cols = find_columns(check_ws)
+    cols = find_columns(check_ws, (ANTIVIRUS_HEADER, LINK_HEADER) if template_mode else ())
     host_rows = find_host_rows(check_ws)
+    filled_rows = set()
 
     track_wb = openpyxl.load_workbook(track_xlsx)
     track_ws = get_track_sheet(track_wb)
@@ -445,6 +571,7 @@ def main():
         else:
             try:
                 fill_check_row(check_ws, cols, r, df, ignore_ids, host)
+                filled_rows.add(r)
             except Exception as e:
                 print(f"  [ERROR] Check sheet: {e}")
                 problems.append((fname, f"ERROR: O/X not filled ({e})"))
@@ -453,6 +580,12 @@ def main():
 
     if TRACK_ID_HEADER:
         fill_ignore_marks(track_ws, track_cols, ignore_col, ignore_ids)
+
+    if template_mode:
+        no_csv = finalize_weekly_sheet(check_ws, cols, host_rows, filled_rows, week)
+        print(f"Check sheet: antivirus = O, links updated to {week}")
+        if no_csv:
+            print(f"Servers without a {week} CSV, event columns set to O O: {', '.join(no_csv)}")
 
     save(check_wb, check_output)
     save(track_wb, track_output)

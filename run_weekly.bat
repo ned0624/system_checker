@@ -11,12 +11,12 @@ set COLLECTOR=EventLogCheck.ps1
 
 echo [1/2] Collecting event logs with %COLLECTOR% ...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%BASE%\%COLLECTOR%"
-REM Exit code 2 = no errors/warnings left after exclusion, no CSV written: nothing to fill in
+REM Exit code 2 = no errors/warnings left after exclusion, no CSV written.
+REM fill_check still runs: it only uses this week's CSVs and creates this week's check sheet (all O).
 REM (check 2 first: "if errorlevel N" means "exit code >= N")
 if errorlevel 2 (
-    echo.
-    echo No error/warning events after exclusion - no CSV written, nothing to fill in.
-    goto END
+    echo No error/warning events after exclusion - no CSV written this time.
+    goto FILL
 )
 REM Exit code 1 = error (folder not writable, or every server failed)
 if errorlevel 1 (
@@ -26,8 +26,10 @@ if errorlevel 1 (
     goto END
 )
 
+:FILL
+
 echo [2/2] Filling check sheet and tracking sheet...
-REM fill_check reads CSVs from paths.csv_dir in config.json - it must be the same folder as OutDir in the ps1
+REM fill_check reads this week's CSVs from paths.csv_dir in config.json - it must be the same folder as OutDir in the ps1
 REM Use fill_check.exe if present, otherwise run fill_check.py with Python
 if exist "%BASE%\fill_check\fill_check.exe" (
     "%BASE%\fill_check\fill_check.exe"
