@@ -151,7 +151,7 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
     "antivirus_header": "防毒軟體",
     "link_header": "連結",
     "link_target": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/Reference/BOS",
-    "link_text": null,
+    "link_text": "Evidence_{week}",
     ...
 }
 ```
@@ -168,10 +168,11 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
 - 連結欄：設定 `link_target` 時，每一列的超連結由程式產生，例如只連到當週的 BOS 資料夾：
   ```json
   "link_target": "//xintec.com.tw/tsm/Supporting_Org/資訊及通訊技術處/80 品質管理/System Check/{week}/Reference/BOS",
-  "link_text": null
+  "link_text": "Evidence_{week}"
   ```
   可用 `{week}`（W2642）、`{yy}`、`{ww}`、`{host}`（該列伺服器名稱）。
-  `link_text` 是格子顯示的文字（例：`"BOS - {host}_Evidence_W{ww}"`）；`null` = 沿用範本原本的文字並換週別，空白格顯示 `BOS`。
+  `link_text` 是格子顯示的文字：`"Evidence_{week}"` → `Evidence_W2643`、`"Evidence_W{ww}"` → `Evidence_W43`、
+  `"BOS - {host}_Evidence_W{ww}"` → `BOS - erpdis02_Evidence_W43`；`null` = 沿用範本原本的文字並換週別，空白格顯示 `BOS`。
   有底色的連結格不會加連結。不設定 `link_target` 時，只把範本既有連結的 `W2640` → `W2642`、`_W40` → `_W42`
 - 只處理**本週**的 CSV（今天所在的 ISO 週）；補跑其他週用 `python fill_check.py --week W2641`
 - 不設定 `template` 時維持原本行為（直接改 `paths.check_xlsx`），但一樣只處理本週的 CSV
