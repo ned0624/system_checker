@@ -106,16 +106,16 @@ jobs:
           python ci_settings_test.py check "$env:RUNNER_TEMP\st" "$env:COMPUTERNAME"
           if ($LASTEXITCODE -ne 0) { throw "settings check failed" }
 
-      - name: No events left gives exit 2 and no CSV (-Days 0)
+      - name: No events left gives exit 2 and no CSV (period in 2000)
         shell: powershell
         run: |
-          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -Days 0 -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -StartTime 2000-01-01 -EndTime 2000-01-02 -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
           Write-Output $out
-          if ($LASTEXITCODE -ne 2 -or $out -notmatch 'no CSV written') { throw "local -Days 0: expected exit 2, got $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 2 -or $out -notmatch 'no CSV written') { throw "local no-events: expected exit 2, got $LASTEXITCODE" }
           Set-Content "$env:RUNNER_TEMP\lh.txt" "localhost"
-          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -Days 0 -ServerList "$env:RUNNER_TEMP\lh.txt" -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -StartTime 2000-01-01 -EndTime 2000-01-02 -ServerList "$env:RUNNER_TEMP\lh.txt" -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
           Write-Output $out
-          if ($LASTEXITCODE -ne 2 -or $out -notmatch '0 with CSV, 1 without events') { throw "server-list -Days 0: expected exit 2, got $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 2 -or $out -notmatch '0 with CSV, 1 without events') { throw "server-list no-events: expected exit 2, got $LASTEXITCODE" }
           if (Get-ChildItem "$env:RUNNER_TEMP\ev0" -Filter *.csv) { throw "CSV must not be written when no events are left" }
           exit 0
 
@@ -128,6 +128,43 @@ jobs:
           $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -OutDir $ro -LogDir "$env:RUNNER_TEMP\logs_ro" 2>&1 | Out-String
           Write-Output $out
           if ($LASTEXITCODE -ne 1 -or $out -notmatch 'Cannot write to folder' -or $out -match 'done') { throw "read-only folder: expected exit 1 with permission message, got $LASTEXITCODE" }
+          exit 0
+
+      - name: Period settings (StartTime / EndTime / default 7 days)
+        shell: powershell
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          $now = Get-Date
+          # a. explicit period: CSV file date = end date, events inside the period
+          $s = $now.AddDays(-10).ToString('yyyy-MM-dd') + ' 00:00'
+          $e = $now.AddHours(-1).ToString('yyyy-MM-dd HH:mm')
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -StartTime $s -EndTime $e -OutDir "$env:RUNNER_TEMP\per" -LogDir "$env:RUNNER_TEMP\per_logs" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -notin 0, 2) { throw "explicit period failed: $LASTEXITCODE" }
+          if ($out -notmatch [regex]::Escape("Period     : $s ~ $e")) { throw "Period line missing or wrong" }
+          python ci_period_check.py "$env:RUNNER_TEMP\per" "$s" "$e"
+          if ($LASTEXITCODE -ne 0) { throw "period check failed" }
+          # b. only StartTime: end = now
+          $s2 = $now.AddDays(-3).ToString('yyyy-MM-dd')
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -StartTime $s2 -OutDir "$env:RUNNER_TEMP\per2" -LogDir "$env:RUNNER_TEMP\per_logs" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -notin 0, 2) { throw "StartTime only failed: $LASTEXITCODE" }
+          if ($out -notmatch [regex]::Escape("Period     : $s2 00:00 ~ $($now.ToString('yyyy-MM-dd'))")) { throw "StartTime only: end should be now" }
+          # c. SETTINGS without Days / StartTime / EndTime -> last 7 days
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\nodays" | Out-Null
+          (Get-Content .\EventLogCheck_Local.ps1) | Where-Object { $_ -notmatch '^(Days|StartTime|EndTime)\s*=' } | Set-Content "$env:RUNNER_TEMP\nodays\EventLogCheck_Local.ps1"
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\nodays\EventLogCheck_Local.ps1" -OutDir "$env:RUNNER_TEMP\per3" -LogDir "$env:RUNNER_TEMP\per_logs" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -notin 0, 2) { throw "no Days setting failed: $LASTEXITCODE" }
+          if ($out -notmatch [regex]::Escape("Period     : $($now.AddDays(-7).ToString('yyyy-MM-dd'))")) { throw "default should be 7 days" }
+          # d. invalid date and e. start after end -> exit 1
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -StartTime 2026-13-40 -OutDir "$env:RUNNER_TEMP\per4" -LogDir "$env:RUNNER_TEMP\per_logs" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'not a valid date') { throw "invalid date: expected exit 1, got $LASTEXITCODE" }
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -StartTime 2026-10-22 -EndTime 2026-10-21 -OutDir "$env:RUNNER_TEMP\per4" -LogDir "$env:RUNNER_TEMP\per_logs" 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'must be earlier') { throw "start after end: expected exit 1, got $LASTEXITCODE" }
           exit 0
 
       - name: Failures must exit 1 and must not say done

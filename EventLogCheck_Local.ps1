@@ -1,6 +1,6 @@
-# Collect event log errors/warnings of the last N days on THIS computer, one CSV:
+# Collect event log errors/warnings of a period (default: last 7 days) on THIS computer, one CSV:
 #   <OutDir>\yyyyMMdd_<computer name>.csv
-# Usage (run on each server): powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-Days 7] [-ExcludeFile ...]
+# Usage (run on each server): powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-StartTime 2026-10-15] [-EndTime 2026-10-22] [-Days 7] [-ExcludeFile ...]
 # - OutDir can be a share (e.g. \\fileserver\SystemCheck\EventLog) to collect all servers' CSVs
 # - Only Critical/Error/Warning (Level 1-3), no Information; no CSV when none are left after exclusion
 # - Event IDs listed in the exclude file are dropped
@@ -9,7 +9,9 @@
 param(
     [string]$OutDir,
     [string]$LogDir,
-    [int]$Days,
+    [string]$StartTime,
+    [string]$EndTime,
+    [string]$Days,
     [string]$ExcludeFile
 )
 
@@ -18,12 +20,16 @@ param(
 # paths (\\server\share\...) are OK: the script re-reads this block from the file itself and
 # detects the file encoding (UTF-8 with/without BOM, or ANSI/Big5), so how Notepad saves
 # the file does not matter. Command-line parameters (-OutDir etc.) override these values.
-# Paths may contain {week} (W2643), {yy} (26), {ww} (43) - replaced with the ISO week of today,
+# Period: StartTime / EndTime as yyyy-MM-dd or yyyy-MM-dd HH:mm (date only = 00:00). Empty EndTime = now,
+# empty StartTime = EndTime minus Days, empty Days = 7.
+# Paths may contain {week} (W2643), {yy} (26), {ww} (43) - replaced with the ISO week of the period end,
 # e.g. OutDir = Z:\...\System Check\{week}\Reference\BOS
 $Settings = @'
 OutDir      = D:\SystemCheck\EventLog
 LogDir      = D:\SystemCheck\logs
 ExcludeFile = D:\SystemCheck\excluded_ids.txt
+StartTime   =
+EndTime     =
 Days        = 7
 '@
 # ===== END OF SETTINGS ===============================================================
@@ -54,7 +60,7 @@ function Read-ScriptSettings {
 
 # Parameters given on the command line win; otherwise use the SETTINGS block
 $cfg = Read-ScriptSettings
-foreach ($key in @('OutDir', 'LogDir', 'ExcludeFile', 'Days')) {
+foreach ($key in @('OutDir', 'LogDir', 'ExcludeFile')) {
     if (-not $PSBoundParameters.ContainsKey($key)) {
         if (-not $cfg.ContainsKey($key) -or -not $cfg[$key]) {
             Write-Host "[ERROR] Setting '$key' is missing in the SETTINGS block of $PSCommandPath"
@@ -62,6 +68,33 @@ foreach ($key in @('OutDir', 'LogDir', 'ExcludeFile', 'Days')) {
         }
         Set-Variable -Name $key -Value $cfg[$key]
     }
+}
+# Optional: StartTime / EndTime / Days (empty = not set)
+foreach ($key in @('StartTime', 'EndTime', 'Days')) {
+    if (-not $PSBoundParameters.ContainsKey($key) -and $cfg.ContainsKey($key)) {
+        Set-Variable -Name $key -Value $cfg[$key]
+    }
+}
+
+# Parse a date/time setting; date only = 00:00 of that day. Fixed formats, independent of regional settings.
+function ConvertTo-Time([string]$text, [string]$name) {
+    $formats = [string[]]@('yyyy-MM-dd', 'yyyy-MM-dd HH:mm', 'yyyy-MM-dd HH:mm:ss', 'yyyy-M-d', 'yyyy-M-d H:mm',
+                           'yyyy/MM/dd', 'yyyy/MM/dd HH:mm', 'yyyy/MM/dd HH:mm:ss', 'yyyy/M/d', 'yyyy/M/d H:mm')
+    try {
+        return [datetime]::ParseExact($text.Trim(), $formats, [Globalization.CultureInfo]::InvariantCulture,
+                                      [Globalization.DateTimeStyles]::None)
+    }
+    catch {
+        Write-Host "[ERROR] $name '$text' is not a valid date/time (use yyyy-MM-dd or yyyy-MM-dd HH:mm)"
+        exit 1
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($Days)) {
+    $Days = 7
+} elseif (-not [int]::TryParse($Days.Trim(), [ref]$null) -or [int]$Days -lt 0) {
+    Write-Host "[ERROR] Days '$Days' must be a whole number of days"
+    exit 1
 }
 $Days = [int]$Days
 
@@ -75,10 +108,17 @@ function Get-IsoWeek([datetime]$d) {
 }
 
 $ErrorActionPreference = 'Continue'
-$now     = Get-Date
-$start   = $now.AddDays(-$Days)
-$date    = $now.ToString('yyyyMMdd')
-$week    = Get-IsoWeek $now
+# Period: EndTime (default now) back to StartTime (default EndTime - Days, Days default 7)
+$end = if ([string]::IsNullOrWhiteSpace($EndTime)) { Get-Date } else { ConvertTo-Time $EndTime 'EndTime' }
+$start = if ([string]::IsNullOrWhiteSpace($StartTime)) { $end.AddDays(-$Days) } else { ConvertTo-Time $StartTime 'StartTime' }
+if ($start -ge $end) {
+    Write-Host "[ERROR] StartTime ($($start.ToString('yyyy-MM-dd HH:mm'))) must be earlier than EndTime ($($end.ToString('yyyy-MM-dd HH:mm')))"
+    exit 1
+}
+# CSV file date and {week} follow the END of the period (= today when EndTime is not set)
+$date    = $end.ToString('yyyyMMdd')
+$week    = Get-IsoWeek $end
+$period  = "$($start.ToString('yyyy-MM-dd HH:mm')) ~ $($end.ToString('yyyy-MM-dd HH:mm')) (week $week)"
 
 # {week} / {yy} / {ww} in paths -> this week, e.g. ...\System Check\{week}\Reference\BOS -> ...\W2643\...
 foreach ($key in @('OutDir', 'LogDir', 'ExcludeFile')) {
@@ -180,7 +220,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
 
     $events = foreach ($log in $logs) {
         try {
-            Get-WinEvent @remote -FilterHashtable @{ LogName = $log.LogName; Level = 1, 2, 3; StartTime = $start } -ErrorAction Stop
+            Get-WinEvent @remote -FilterHashtable @{ LogName = $log.LogName; Level = 1, 2, 3; StartTime = $start; EndTime = $end } -ErrorAction Stop
         }
         catch {
             # "No matching events" is not an error (check ErrorId; the message text is localized)
@@ -233,8 +273,8 @@ function Export-ServerEvents([string]$server, [string]$name) {
 }
 
 Write-Log ""
-Write-Log "===== EventLogCheck_Local start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (last $Days days, computer: $env:COMPUTERNAME) ====="
-Write-Log "Week       : $week"
+Write-Log "===== EventLogCheck_Local start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (computer: $env:COMPUTERNAME) ====="
+Write-Log "Period     : $period"
 Write-Log "CSV folder : $OutDir"
 $excludeIds = Read-ExcludeIds
 switch (Export-ServerEvents $null $env:COMPUTERNAME) {

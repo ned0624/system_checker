@@ -74,6 +74,21 @@ Days        = 7
 不會再變成亂碼。輸出或 log 資料夾無法建立/寫入、或所有伺服器都失敗時，ps1 會以結束碼 1 結束，`run_weekly.bat` 會停下不填表。
 `fill_check` 讀 CSV 的資料夾是 config.json 的 `paths.csv_dir`，要和 ps1 的 `OutDir` 指同一個位置。
 
+**撈取時間**：SETTINGS 的 `StartTime` / `EndTime`（格式 `yyyy-MM-dd` 或 `yyyy-MM-dd HH:mm`，只寫日期 = 當天 00:00）：
+
+| 設定 | 撈取區間 |
+|---|---|
+| 都不設定（預設） | 現在往前 7 天 |
+| 只設 `Days` | 現在往前 `Days` 天 |
+| 只設 `StartTime` | `StartTime` ～ 現在 |
+| `StartTime` + `EndTime` | 指定區間，例：`2026-10-15` ～ `2026-10-22` |
+
+CSV 檔名的日期與路徑中的 `{week}` 依**結束時間**那天決定，補撈過去某週後用 `fill_check --week` 指定同一週處理：
+```
+powershell -ExecutionPolicy Bypass -File EventLogCheck.ps1 -StartTime 2026-10-15 -EndTime 2026-10-22
+fill_check.exe --week W2643
+```
+
 命令列參數（可省略，有給會覆蓋 SETTINGS）：
 ```
 powershell -ExecutionPolicy Bypass -File EventLogCheck.ps1 -ServerList D:\SystemCheck\serverlist.txt -OutDir D:\SystemCheck\EventLog -LogDir D:\SystemCheck\logs -Days 7
