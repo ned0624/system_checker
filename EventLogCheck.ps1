@@ -157,7 +157,7 @@ foreach ($dir in @($OutDir, $LogDir)) {
         exit 1
     }
 }
-$logFile = Join-Path $LogDir "$date.log"
+$logFile = Join-Path $LogDir "${date}.log"
 $logBroken = $false
 
 # Level name from the level number, not LevelDisplayName (empty for some providers).

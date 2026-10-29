@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """CI 用：檢查 EventLogCheck*.ps1 產生的 CSV 能被 fill_check 讀取"""
+import re
 import glob
 import os
 import sys
@@ -27,7 +28,14 @@ assert not ids & {"11", "46"}, f"excluded IDs present in localhost CSV: {ids & {
 local_ids = set(pd.read_csv(files[computer.upper()], dtype=str, encoding="utf-8-sig")["Id"])
 print("excluded IDs present in local (unfiltered) CSV:", sorted(local_ids & {"11", "46"}))
 
-log = open(glob.glob(os.path.join(log_dir, "*.log"))[0], encoding="utf-8-sig").read()
+logs = sorted(os.path.basename(f) for f in glob.glob(os.path.join(log_dir, "*.log")))
+print("log files:", logs)
+local_logs = [f for f in logs if re.fullmatch(r"\d{8}_" + re.escape(computer) + r"\.log", f, re.I)]
+remote_logs = [f for f in logs if re.fullmatch(r"\d{8}\.log", f)]
+assert local_logs, f"local log should be named yyyyMMdd_{computer}.log: {logs}"
+assert remote_logs, f"server-list log should be named yyyyMMdd.log: {logs}"
+log = "".join(open(os.path.join(log_dir, f), encoding="utf-8-sig").read() for f in logs)
+assert "No exclude file" in open(os.path.join(log_dir, local_logs[0]), encoding="utf-8-sig").read(), "local run did not write its own log"
 print(log)
 assert "Excluded event IDs: 2" in log, "exclude file not loaded"
 assert "No exclude file" in log, "local run should report no exclude file"

@@ -39,7 +39,7 @@ D:\SystemCheck\
 ├─ search_ignore.py / .exe 可忽略事件ID 搜尋
 ├─ config.json
 ├─ EventLog\               CSV 輸出（每週累積）
-└─ logs\                   執行紀錄（依日期命名）
+└─ logs\                   執行紀錄（日期.log；本機版為 日期_電腦名稱.log）
 ```
 
 ### 撈取腳本（兩個版本）
@@ -56,7 +56,7 @@ D:\SystemCheck\
 - 排除後沒有任何錯誤/警告的伺服器**不產生 CSV**，只在 log 記錄（檢核表那一列不會自動填，請手動填 O O）
 - 結束碼：`0` 有寫出 CSV、`1` 錯誤（資料夾無法寫入／全部伺服器失敗）、`2` 沒有任何事件可報告（bat 會略過填表）
 - 開始時會測試輸出與 log 資料夾能否寫入；不行就顯示執行帳號並停止（共用資料夾需給該帳號「修改」權限）
-- log 與 fill_check 共用 `logs\日期.log`
+- log：`EventLogCheck.ps1` 與 fill_check 共用 `logs\日期.log`；`EventLogCheck_Local.ps1` 寫 `logs\日期_電腦名稱.log`（例如 `20261029_T1-WFA-AP02V.log`），多台寫到同一個共用資料夾也分得開
 - **排除 ID**：`excluded_ids.txt`（預設 `D:\SystemCheck\excluded_ids.txt`，可用 `-ExcludeFile` 指定）裡的事件 ID 直接不寫進 CSV，
   所以不會出現在檢核表備註與追蹤表。檔案不存在就不排除。一行一個或用逗號分隔，`#` 之後是註解。
   log 會記錄載入了幾個 ID、每台排除了幾筆事件。

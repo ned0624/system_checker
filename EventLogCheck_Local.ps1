@@ -1,5 +1,6 @@
 # Collect event log errors/warnings of a period (default: last 7 days) on THIS computer, one CSV:
 #   <OutDir>\yyyyMMdd_<computer name>.csv
+# Log file: <LogDir>\yyyyMMdd_<computer name>.log (date = end of the period, same as the CSV)
 # Usage (run on each server): powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-StartTime 2026-10-15] [-EndTime 2026-10-22] [-Days 7] [-ExcludeFile ...]
 # - OutDir can be a share (e.g. \\fileserver\SystemCheck\EventLog) to collect all servers' CSVs
 # - Only Critical/Error/Warning (Level 1-3), no Information; no CSV when none are left after exclusion
@@ -154,7 +155,7 @@ foreach ($dir in @($OutDir, $LogDir)) {
         exit 1
     }
 }
-$logFile = Join-Path $LogDir "$date.log"
+$logFile = Join-Path $LogDir "${date}_$($env:COMPUTERNAME).log"
 $logBroken = $false
 
 # Level name from the level number, not LevelDisplayName (empty for some providers).
