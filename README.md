@@ -13,6 +13,7 @@
 |---|---|
 | `fill_check.py` | 主程式：填檢核表 + 貼追蹤表 |
 | `search_ignore.py` | 可忽略事件ID 搜尋工具（互動式 CLI） |
+| `monitor_check.py` / `monitor_check.json` | 監控數據分析：Kettle 匯出的 CSV 有沒有超過 spec、使用量是否持續上升 |
 | `config.json` | 設定檔（檔名、工作表、欄位標題） |
 | `csv/` | 放每週的 CSV 檢核結果 |
 | `BOS_SystemCheck.xlsx` | 系統檢核表（要填 O/X 的表） |
@@ -295,6 +296,63 @@ ID> 200,1801
 | `f` / `file` | 換一個 Excel 檔 |
 | `q` / `quit` / `exit` / `離開` | 結束程式，也可直接關閉視窗 |
 
+## 監控數據分析 monitor_check
+
+分析 Kettle（`monitor.ktr`）每天匯出的每台主機 CSV（`D:/export/<主機>.csv`，最近 1 天、每分鐘一筆）：
+
+```
+time_min,cpu,memory,disk_c,disk_d,disk_e
+upper_spec,60.00,25.60,40.00,420.00,625.00
+2026-11-03 16:42,4.62,22.10,29.95,377.02,600.60
+```
+
+- 檔名 = 主機名稱；第一列可以是表頭，也可以直接是 `upper_spec`（沒表頭時欄位依上面順序）
+- `time_min` 以外的欄位都會分析，Kettle 之後加欄位不用改程式；空白值略過（例如沒有 E 槽）
+- 編碼 UTF-8（含 BOM）或 MS950 都可以；讀不了的檔案顯示 `[WARN]` 後繼續下一台
+
+### 檢查項目
+
+| 項目 | 判定 |
+|---|---|
+| 超過 spec | 數值 > `upper_spec`；記錄超標分鐘數、首次/最後時間、最長連續分鐘數、最大值與時間。spec 空白則不檢查 |
+| 持續上升沒降下來 | 每小時取平均，整天升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%。CPU 這種上下跳動的不會誤判；判定上升時估算照目前速度約幾小時後達 spec。不足 6 小時的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一小時平均為基準 |
+
+門檻在 `monitor_check.json` 的 `trend` 調整：
+
+```json
+{
+  "csv_dir": "D:/export",
+  "report_dir": "D:/SystemCheck/monitor_report",
+  "log_dir": "D:/SystemCheck/logs",
+  "trend": { "bucket_minutes": 60, "min_buckets": 6, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1 }
+}
+```
+
+路徑可用 `{week}` / `{yy}` / `{ww}`（今天的 ISO 週）；相對路徑以 exe 所在資料夾為基準。
+
+### 輸出
+
+- 報表 `report_dir\yyyyMMdd_monitor_report.csv`（Excel 可直接開），一台主機一個指標一列：
+  `host, metric, spec, max, max_time, over_count, over_first, over_last, longest_over_min, first_hour_avg, last_hour_avg, rise, max_drop, rising, hours_to_spec, result`
+  - `result`：`OK` / `OVER SPEC` / `RISING` / `OVER SPEC+RISING` / `NO DATA`
+- 畫面與 log `log_dir\yyyyMMdd_monitor_check.log`：每台一行摘要，最後列出所有超標與持續上升的項目
+- 結束碼：0 = 完成（不論有沒有發現問題），1 = 錯誤（設定檔、CSV 資料夾、報表或 log 寫不進去）
+
+### 執行
+
+```
+monitor_check.exe              （讀 monitor_check.json 的 csv_dir）
+monitor_check.exe D:\export    （臨時指定 CSV 資料夾）
+```
+
+`monitor_check.exe` 是單一檔案、只用 Python 內建模組（不含 pandas），`monitor_check.json` 放在旁邊。
+排程時接在 Kettle 後面，例如：
+
+```
+call pan.bat /file:monitor.ktr
+D:\SystemCheck\monitor_check.exe
+```
+
 ## 設定檔 config.json
 
 ### 路徑設定 `paths`
@@ -365,6 +423,7 @@ build_exe.bat
 | 程式 | 打包方式 | 產出 | 說明 |
 |---|---|---|---|
 | search_ignore | `--onefile`，排除 pandas/numpy/PIL/lxml | `dist\search_ignore.exe`（約 10 MB） | 單一檔案，複製到哪都能用 |
+| monitor_check | `--onefile`，排除 pandas/numpy/openpyxl/PIL/lxml | `dist\monitor_check.exe` | 單一檔案，`monitor_check.json` 放在旁邊 |
 | fill_check | `--onedir` | `dist\fill_check\` 資料夾 | 整個資料夾一起複製，`config.json` 放在 `fill_check.exe` 旁邊 |
 
 **為什麼不全部用 `--onefile`？** `--onefile` 每次啟動都要把整包程式解壓縮到暫存資料夾，

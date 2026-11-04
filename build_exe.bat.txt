@@ -11,4 +11,7 @@ REM Output is the dist\fill_check\ folder - copy the whole folder and run fill_c
 REM Put config.json in dist\fill_check\ next to fill_check.exe
 pyinstaller --onedir --noconfirm --exclude-module PIL --exclude-module lxml fill_check.py
 
+REM monitor_check: standard library only; one small exe, put monitor_check.json next to it
+pyinstaller --onefile --noconfirm --exclude-module pandas --exclude-module numpy --exclude-module openpyxl --exclude-module PIL --exclude-module lxml monitor_check.py
+
 pause

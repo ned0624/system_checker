@@ -41,6 +41,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "template test ($m) failed" }
           }
 
+      - name: monitor_check (over spec / rising trend)
+        shell: powershell
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python ci_monitor_test.py "$env:RUNNER_TEMP\mon"
+          if ($LASTEXITCODE -ne 0) { throw "monitor_check test failed" }
+
       - name: Check .bat.txt copies are in sync
         shell: bash
         run: |
@@ -215,6 +223,9 @@ jobs:
       - name: Build search_ignore.exe
         run: pyinstaller --onefile --noconfirm --exclude-module pandas --exclude-module numpy --exclude-module PIL --exclude-module lxml search_ignore.py
 
+      - name: Build monitor_check.exe
+        run: pyinstaller --onefile --noconfirm --exclude-module pandas --exclude-module numpy --exclude-module openpyxl --exclude-module PIL --exclude-module lxml monitor_check.py
+
       - name: Build fill_check (onedir)
         run: pyinstaller --onedir --noconfirm --exclude-module PIL --exclude-module lxml fill_check.py
 
@@ -226,6 +237,7 @@ jobs:
           New-Item -ItemType Directory -Force $out, "$out\EventLog", "$out\logs" | Out-Null
           Copy-Item -Recurse dist\fill_check "$out\fill_check"
           Copy-Item config.json "$out\fill_check\config.json"
+          Copy-Item dist\monitor_check.exe, monitor_check.json $out
           Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, EventLogCheck_Local.ps1, excluded_ids.txt, README.md $out
           Compress-Archive -Path $out -DestinationPath SystemCheck.zip
           Copy-Item dist\search_ignore.exe search_ignore.exe
@@ -240,6 +252,10 @@ jobs:
           $o = & .\SystemCheck\fill_check\fill_check.exe 2>&1 | Out-String
           Write-Output $o
           if ($LASTEXITCODE -ne 1 -or $o -notmatch "paths\.csv_dir") { throw "fill_check.exe did not start correctly: $LASTEXITCODE" }
+          # 監控分析：runner 上沒有 D:/export，應提示 CSV folder not found 並以 1 結束
+          $o = & .\SystemCheck\monitor_check.exe 2>&1 | Out-String
+          Write-Output $o
+          if ($LASTEXITCODE -ne 1 -or $o -notmatch "CSV folder not found") { throw "monitor_check.exe did not start correctly: $LASTEXITCODE" }
           exit 0
 
       - uses: actions/upload-artifact@v5
@@ -258,6 +274,7 @@ jobs:
           body: |
             - SystemCheck.zip：解壓到 D:\ 會得到 D:\SystemCheck（fill_check、search_ignore.exe、run_weekly.bat、EventLogCheck.ps1）
             - search_ignore.exe：可忽略事件ID 搜尋工具，單一檔案
+            - SystemCheck\monitor_check.exe：分析 Kettle 匯出的監控 CSV（超過 spec、持續上升），設定在 monitor_check.json
             使用前請修改 SystemCheck\fill_check\config.json 的 paths
           files: |
             SystemCheck.zip
