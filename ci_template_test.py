@@ -6,6 +6,7 @@ twice (second run must keep manual edits) and checks the generated weekly file.
 Usage: python ci_template_test.py <empty temp folder>
 """
 import json
+import glob
 import os
 import shutil
 import subprocess
@@ -90,7 +91,7 @@ cfg = {
                     "template": tpl, "antivirus_header": "防毒軟體", "link_header": "連結"},
     "track": {"sheet": "事件檢視器_BOS", "header_row": 1, "host_header": "Server Name", "week_header": "周",
               "ignore_header": "可忽略", "output": None},
-    "log_dir": os.path.join(tmp, "logs"),
+    "log_dir": os.path.join(tmp, "{week}", "logs") if MODE == "weekdir" else os.path.join(tmp, "logs"),
 }
 LINK_ROOT = os.path.join(tmp, "share")
 if MODE in ("rule", "ruletext"):
@@ -108,6 +109,9 @@ def run():
 
 
 run()
+if MODE == "weekdir":   # log_dir with {week}: log goes to the week folder, no literal {week} folder
+    assert glob.glob(os.path.join(tmp, "W2642", "logs", "*.log")), "log not written to week folder"
+    assert not os.path.exists(os.path.join(tmp, "{week}")), "literal {week} folder created"
 out = os.path.join(tmp, "out", "W2642", "BOS_W2642.xlsx")
 assert os.path.isfile(out), "weekly file not created in W2642 folder"
 ws = openpyxl.load_workbook(out).active

@@ -57,7 +57,7 @@
     wait_if_open.retry_seconds / max_wait_minutes
                                               Excel 被別人開著時，每幾秒重試、最多等幾分鐘（0 = 不等）；
                                               超時未存檔以結束碼 3 結束，重跑是安全的
-    log_dir                                   log 資料夾，省略 = logs（依日期命名，例: 20261016.log；同一天多次執行附加在同一檔）
+    log_dir                                   log 資料夾，省略 = logs，可用 {week}/{yy}/{ww}（依日期命名，例: 20261016.log；同一天多次執行附加在同一檔）
     路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
     JSON 裡的反斜線要寫兩次（\\），或改用正斜線 /
     相對路徑以 config.json 所在資料夾為基準
@@ -749,8 +749,13 @@ class _Tee:
 
 def run():
     """執行 main，畫面輸出全部寫進 log；未預期的錯誤只在畫面顯示一行，完整錯誤內容記在 log"""
-    os.makedirs(LOG_DIR, exist_ok=True)
-    log_path = os.path.join(LOG_DIR, f"{datetime.now():%Y%m%d}.log")
+    # log_dir 也可用 {week}/{yy}/{ww}；週別同 main（--week 或今天），格式錯誤時先用今天，由 main 報錯
+    argv = sys.argv[1:]
+    k = argv.index("--week") + 1 if "--week" in argv else 0
+    week = argv[k].upper() if 0 < k < len(argv) else ""
+    log_dir = week_path(LOG_DIR, week if re.fullmatch(r"W\d{4}", week) else week_label(date.today()))
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"{datetime.now():%Y%m%d}.log")
     console = sys.stdout
     code = 0
     # 同一天執行多次都附加在同一個 log 檔

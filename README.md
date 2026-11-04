@@ -261,7 +261,7 @@ log 寫在 `logs\` 資料夾，依執行日期命名（例：`20261016.log`）�
 | 設定檔、路徑、工作表、標題有誤 | 程式中止，**兩個 Excel 都不會存檔**；畫面顯示一行原因，log 內有完整錯誤內容 |
 | Excel 開啟中無法存檔 | 程式中止，關閉 Excel 後重跑（重跑不會重複貼） |
 
-log 資料夾可在 config.json 加 `"log_dir": "D:/週檢/logs"` 指定。包成 exe 時視窗會直接關閉，請看 log 確認結果。
+log 資料夾可在 config.json 加 `"log_dir": "D:/週檢/logs"` 指定，路徑可用 `{week}`（例: `.../System Check/{week}/Reference/BOS`）。包成 exe 時視窗會直接關閉，請看 log 確認結果。
 
 ## 可忽略事件ID 搜尋工具
 
