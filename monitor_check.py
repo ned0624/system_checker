@@ -26,10 +26,12 @@ fill_check 也 import 本程式（analyze_folder / note_text），把結果填�
 用法:
     monitor_check.exe [csv資料夾]          （有給參數會取代設定檔的 csv_dir）
 
-設定檔: 與本程式同資料夾的 monitor_check.json
-    csv_dir / report_dir / log_dir   路徑可用 {week}/{yyyy}/{yy}/{ww}（今天的 ISO 週，例: W2645 / 2026 / 26 / 45）
+設定檔: config.json（依序找本程式同資料夾、上一層），與 Kettle、fill_check 共用，讀其中:
+    monitor.csv_dir / monitor.report_dir / log_dir
+                                     路徑可用 {week}/{yyyy}/{yy}/{ww}（今天的 ISO 週，例: W2645 / 2026 / 26 / 45）
                                      Kettle 週資料夾 D:/SystemCheck/2026-W45 → D:/SystemCheck/{yyyy}-W{ww}
                                      相對路徑以設定檔所在資料夾為基準
+    monitor.trend                    持續上升門檻（null = 下列預設）:
     trend.bucket_minutes             幾分鐘取一次平均（預設 1440 = 每天）
     trend.min_buckets                至少幾段才判定上升（預設 3）
     trend.min_rise_pct_of_spec       升幅門檻，spec 的百分比（預設 5）
@@ -62,8 +64,8 @@ def _base_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-BASE_DIR = _base_dir()
-CONFIG_PATH = os.path.join(BASE_DIR, "monitor_check.json")
+APP_DIR = _base_dir()
+LEGACY_CONFIG = "monitor_check.json"  # 舊版獨立設定檔，仍可讀
 
 
 def week_label(d):
@@ -79,8 +81,27 @@ def week_path(path, week):
             .replace("{yy}", week[1:3]).replace("{ww}", week[3:5]))
 
 
-def resolve(p, week):
-    return os.path.join(BASE_DIR, week_path(p, week))
+def resolve(base, p, week):
+    return os.path.join(base, week_path(p, week))
+
+
+def load_settings():
+    """回傳 (設定檔路徑, 設定 dict(csv_dir, report_dir, log_dir, trend), 警告)
+    config.json：同資料夾 → 上一層，用其中的 monitor 段；沒有時改讀舊的 monitor_check.json"""
+    for path in (os.path.join(APP_DIR, "config.json"), os.path.join(os.path.dirname(APP_DIR), "config.json")):
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8-sig") as f:
+                cfg = json.load(f)
+            if cfg.get("monitor"):
+                mon = cfg["monitor"]
+                return path, {"csv_dir": mon.get("csv_dir"), "report_dir": mon.get("report_dir"),
+                              "log_dir": cfg.get("log_dir"), "trend": mon.get("trend")}, None
+    legacy = os.path.join(APP_DIR, LEGACY_CONFIG)
+    if os.path.isfile(legacy):
+        with open(legacy, encoding="utf-8-sig") as f:
+            return legacy, json.load(f), (f"[WARN] {LEGACY_CONFIG} is deprecated, "
+                                          f"move its settings into the \"monitor\" section of config.json")
+    raise FileNotFoundError(f"no config.json with a \"monitor\" section in {APP_DIR} or its parent folder")
 
 
 def to_float(s):
@@ -293,10 +314,10 @@ def note_text(r, label=None):
     return f"[監控] {label} " + "；".join(parts) if parts else None
 
 
-def main(cfg, week, csv_dir):
+def main(cfg, base, week, csv_dir):
     trend = trend_config(cfg.get("trend"))
     if not os.path.isdir(csv_dir):
-        print(f"[ERROR] CSV folder not found: {csv_dir} (check csv_dir in monitor_check.json)")
+        print(f"[ERROR] CSV folder not found: {csv_dir} (check monitor.csv_dir in config.json)")
         return 1
     hosts = analyze_folder(csv_dir, trend)
     files = len(hosts)
@@ -318,7 +339,7 @@ def main(cfg, week, csv_dir):
         print(f"  {host}: {h['n']} rows {fmt(h['first'])} ~ {fmt(h['last'])}{note}, "
               + (", ".join(f"{r['metric']} {r['result']}" for r in bad) if bad else "OK"))
 
-    report_dir = resolve(cfg.get("report_dir") or "monitor_report", week)
+    report_dir = resolve(base, cfg.get("report_dir") or "monitor_report", week)
     report = os.path.join(report_dir, f"{datetime.now():%Y%m%d}_monitor_report.csv")
     try:
         os.makedirs(report_dir, exist_ok=True)
@@ -363,12 +384,12 @@ class _Tee:
 def run():
     week = week_label(date.today())
     try:
-        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-            cfg = json.load(f)
+        config_path, cfg, warn = load_settings()
     except Exception as e:
-        print(f"[ERROR] Cannot read config file {CONFIG_PATH}: {type(e).__name__}: {e}")
+        print(f"[ERROR] Cannot read config: {type(e).__name__}: {e}")
         sys.exit(1)
-    log_dir = resolve(cfg.get("log_dir") or "logs", week)
+    base = os.path.dirname(config_path)
+    log_dir = resolve(base, cfg.get("log_dir") or "logs", week)
     log_path = os.path.join(log_dir, f"{datetime.now():%Y%m%d}_monitor_check.log")
     try:
         os.makedirs(log_dir, exist_ok=True)
@@ -382,8 +403,11 @@ def run():
         sys.stdout = _Tee(console, log)
         try:
             print(f"\n===== monitor_check start {datetime.now():%Y-%m-%d %H:%M:%S} =====")
-            csv_dir = sys.argv[1] if len(sys.argv) > 1 else resolve(cfg.get("csv_dir") or "export", week)
-            code = main(cfg, week, csv_dir)
+            print(f"Config: {config_path}")
+            if warn:
+                print(warn)
+            csv_dir = sys.argv[1] if len(sys.argv) > 1 else resolve(base, cfg.get("csv_dir") or "export", week)
+            code = main(cfg, base, week, csv_dir)
         except Exception as e:
             print(f"[ERROR] Aborted: {type(e).__name__}: {e}")
             log.write("\n" + traceback.format_exc())

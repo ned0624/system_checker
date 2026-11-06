@@ -8,10 +8,10 @@ pyinstaller --onefile --exclude-module pandas --exclude-module numpy --exclude-m
 
 REM fill_check: needs pandas; --onedir avoids unpacking on every start
 REM Output is the dist\fill_check\ folder - copy the whole folder and run fill_check.exe inside it
-REM Put config.json in dist\fill_check\ next to fill_check.exe
+REM config.json goes one level up (D:\SystemCheck\config.json), shared with monitor_check and Kettle
 pyinstaller --onedir --noconfirm --exclude-module PIL --exclude-module lxml fill_check.py
 
-REM monitor_check: standard library only; one small exe, put monitor_check.json next to it
+REM monitor_check: standard library only; one small exe, put it next to config.json
 pyinstaller --onefile --noconfirm --exclude-module pandas --exclude-module numpy --exclude-module openpyxl --exclude-module PIL --exclude-module lxml monitor_check.py
 
 pause

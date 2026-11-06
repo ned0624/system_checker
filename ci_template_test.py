@@ -101,7 +101,8 @@ cfg = {
                     "template": tpl, "antivirus_header": "防毒軟體", "link_header": "連結"},
     "track": {"sheet": "事件檢視器_BOS", "header_row": 1, "host_header": "Server Name", "week_header": "周",
               "ignore_header": "可忽略", "output": None},
-    "log_dir": os.path.join(tmp, "{week}", "logs") if MODE == "weekdir" else os.path.join(tmp, "logs"),
+    # weekdir: config.json 放在 app 的上一層（共用設定檔位置），log_dir 用相對路徑 → 以設定檔資料夾為基準
+    "log_dir": os.path.join("{week}", "logs") if MODE == "weekdir" else os.path.join(tmp, "logs"),
 }
 LINK_ROOT = os.path.join(tmp, "share")
 if MODE in ("rule", "ruletext"):
@@ -127,7 +128,8 @@ if MODE == "monitor":
     # SRV-B: cpu 正常 → O；memory 打 O 但沒有數值 → 空白 + 備註
     kettle_csv("SRV-B", "time_min,cpu,memory", "60.00,25.60", [(20.0, None)] * (7 * DAY))
     # SRV-D: 沒有 CSV → CPU 空白 + 備註
-json.dump(cfg, open(os.path.join(app, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+json.dump(cfg, open(os.path.join(tmp if MODE == "weekdir" else app, "config.json"), "w", encoding="utf-8"),
+          ensure_ascii=False, indent=2)
 
 
 def run():
@@ -136,6 +138,8 @@ def run():
                        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
     print(r.stdout, r.stderr)
     assert r.returncode == 0, r.returncode
+    if MODE == "weekdir":
+        assert "Config: " + os.path.join(tmp, "config.json") in r.stdout, "config.json in parent folder not used"
     return r.stdout
 
 

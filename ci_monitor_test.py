@@ -22,8 +22,9 @@ y, w, _ = date.today().isocalendar()
 week = f"W{y % 100:02d}{w:02d}"
 export = os.path.join(tmp, f"{y}-W{w:02d}")   # Kettle 週資料夾 %x-W%v
 os.makedirs(export)
-json.dump({"csv_dir": os.path.join(tmp, "{yyyy}-W{ww}"), "report_dir": os.path.join(tmp, "{week}", "report"),
-           "log_dir": os.path.join(tmp, "logs")}, open(os.path.join(app, "monitor_check.json"), "w"))
+# 共用的 config.json 放在 app 的上一層（D:\\SystemCheck\\config.json 的位置），相對路徑以它為基準
+json.dump({"log_dir": "logs", "monitor": {"csv_dir": "{yyyy}-W{ww}", "report_dir": os.path.join("{week}", "report")}},
+          open(os.path.join(tmp, "config.json"), "w"))
 
 START = datetime(2026, 10, 28, 0, 0)
 N = 7 * 24 * 60   # Kettle 撈 7 天、每分鐘一筆
@@ -119,4 +120,15 @@ assert not os.path.exists(os.path.join(tmp, "{week}")), "literal {week} folder c
 
 r = run(os.path.join(tmp, "no_such_dir"))
 assert r.returncode == 1 and "CSV folder not found" in r.stdout, r.returncode
+
+# 舊版 monitor_check.json（沒有 config.json）仍可用，並提示改用 config.json
+os.remove(os.path.join(tmp, "config.json"))
+json.dump({"csv_dir": os.path.join(tmp, "{yyyy}-W{ww}"), "report_dir": os.path.join(tmp, "legacy_report"),
+           "log_dir": os.path.join(tmp, "logs")}, open(os.path.join(app, "monitor_check.json"), "w"))
+r = run()
+assert r.returncode == 0 and "monitor_check.json is deprecated" in r.stdout, r.returncode
+assert glob.glob(os.path.join(tmp, "legacy_report", "*_monitor_report.csv")), "legacy config not used"
+os.remove(os.path.join(app, "monitor_check.json"))
+r = run()
+assert r.returncode == 1 and "no config.json" in r.stdout, r.returncode
 print("MONITOR TEST OK")

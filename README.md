@@ -13,8 +13,8 @@
 |---|---|
 | `fill_check.py` | 主程式：填檢核表 + 貼追蹤表 |
 | `search_ignore.py` | 可忽略事件ID 搜尋工具（互動式 CLI） |
-| `monitor_check.py` / `monitor_check.json` | 監控數據分析：Kettle 匯出的 CSV 有沒有超過 spec、使用量是否持續上升 |
-| `config.json` | 設定檔（檔名、工作表、欄位標題） |
+| `monitor_check.py` | 監控數據分析：Kettle 匯出的 CSV 有沒有超過 spec、使用量是否持續上升 |
+| `config.json` | **共用設定檔**：Kettle、monitor_check、fill_check 都讀這一份（路徑、template、工作表、欄位標題） |
 | `csv/` | 放每週的 CSV 檢核結果 |
 | `BOS_SystemCheck.xlsx` | 系統檢核表（要填 O/X 的表） |
 | `系統檢核問題追蹤.xlsx` | 問題追蹤表，內含「可忽略事件ID」清單與「事件檢視器_BOS」 |
@@ -37,8 +37,10 @@ D:\SystemCheck\
 ├─ serverlist.txt          伺服器清單（一行一台）
 ├─ excluded_ids.txt        撈取時直接排除的事件 ID
 ├─ fill_check.py          填檢核表、貼追蹤表（或 fill_check\ 資料夾內的 exe）
+├─ monitor_check.exe       監控數據分析報表（Kettle 匯出的 CSV）
 ├─ search_ignore.py / .exe 可忽略事件ID 搜尋
-├─ config.json
+├─ config.json             共用設定檔（Kettle、monitor_check、fill_check）
+├─ 2026-W45\               Kettle 每週匯出的監控 CSV（主機名.csv）
 ├─ EventLog\               CSV 輸出（每週累積）
 └─ logs\                   執行紀錄（日期.log；本機版為 日期_電腦名稱.log）
 ```
@@ -325,19 +327,29 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | 超過 spec | 數值 > `upper_spec`；記錄超標分鐘數、首次/最後時間、最長連續分鐘數、最大值與時間。spec 空白則不檢查 |
 | 持續上升沒降下來 | 每天取平均（從最後一筆往回每 24 小時一段，最舊不完整的一天捨棄），一週升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%。日夜起伏、上下跳動的不會誤判；判定上升時估算照目前速度約幾小時（天）後達 spec。不足 3 天的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一天平均為基準 |
 
-門檻在 `monitor_check.json` 的 `trend` 調整：
+設定在共用 `config.json` 的 `monitor` 段（Kettle、monitor_check、fill_check 都讀這段）：
 
 ```json
-{
-  "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
-  "report_dir": "D:/SystemCheck/monitor_report",
-  "log_dir": "D:/SystemCheck/logs",
-  "trend": { "bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1 }
+"monitor": {
+    "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
+    "days": 7,
+    "report_dir": "D:/SystemCheck/monitor_report",
+    "columns": {"CPU": "cpu", "Memory": "memory", "SWAP": "swap", "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"},
+    "trend": null
 }
 ```
 
-路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww}`（今天的 ISO 週，例: W2645 / 2026 / 26 / 45），
-Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對路徑以 exe 所在資料夾為基準。
+| 欄位 | 誰用 | 說明 |
+|---|---|---|
+| `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 每週監控 CSV 資料夾 |
+| `days` | Kettle | 撈最近幾天（SQL 的 `interval ${DAYS} day`） |
+| `report_dir` | monitor_check | 報表輸出資料夾 |
+| `columns` | fill_check | 檢核表 / template 的監控欄標題 → CSV 欄位 |
+| `trend` | monitor_check、fill_check | 持續上升門檻，null = 預設 `{"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1}` |
+
+log 寫到頂層的 `log_dir`。路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww}`（今天的 ISO 週，例: W2645 / 2026 / 26 / 45），
+Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對路徑以 config.json 所在資料夾為基準。
+舊版的 `monitor_check.json` 仍可讀（會顯示 `[WARN] ... deprecated`），請把內容併進 `monitor` 段後刪除。
 
 ### 輸出
 
@@ -360,17 +372,46 @@ Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對�
 ### 執行
 
 ```
-monitor_check.exe              （讀 monitor_check.json 的 csv_dir）
+monitor_check.exe              （讀 config.json 的 monitor.csv_dir）
 monitor_check.exe D:\SystemCheck\2026-W44    （臨時指定 CSV 資料夾，例如補看上週）
 ```
 
-`monitor_check.exe` 是單一檔案、只用 Python 內建模組（不含 pandas），`monitor_check.json` 放在旁邊。
+`monitor_check.exe` 是單一檔案、只用 Python 內建模組（不含 pandas），放在 `D:\SystemCheck\`（和 config.json 同一層）。
 排程時接在 Kettle 後面，例如：
 
 ```
-call pan.bat /file:monitor.ktr
+call kitchen.bat /file:D:\SystemCheck\kettle\monitor.kjb
 D:\SystemCheck\monitor_check.exe
 ```
+
+### Kettle 讀 config.json
+
+Kettle 不寫死路徑，template、輸出資料夾、天數都從 `D:\SystemCheck\config.json` 讀（和 fill_check 同一份 template）：
+
+1. 新增 Transformation「read_config.ktr」：
+   - **JSON input**：File 頁加入 `D:\SystemCheck\config.json`（Encoding UTF-8）；Fields 頁：
+
+     | Name | Path | Type |
+     |---|---|---|
+     | TEMPLATE | `$.check_sheet.template` | String |
+     | MONITOR_DIR | `$.monitor.csv_dir` | String |
+     | DAYS | `$.monitor.days` | Integer |
+
+   - **Set Variables**：三個欄位設成同名變數，Scope = **Valid in the root job**
+2. 原本的 monitor.ktr：
+   - **Microsoft Excel input**：File 改成 `${TEMPLATE}`（工作表照原本設定）
+   - **Table input**：勾 **Replace variables in script**，SQL 改兩處：
+     ```sql
+     -- 輸出資料夾：原本 concat('D:/SystemCheck/', date_format(now(), '%x-W%v'), '/') as dir
+     concat(replace(replace('${MONITOR_DIR}', '{yyyy}', date_format(now(), '%x')),
+                    '{ww}', date_format(now(), '%v')), '/') as dir
+     -- 天數：原本 interval 7 day（monitor_time 與 lm_time 兩處）
+     interval ${DAYS} day
+     ```
+3. 新增 Job「monitor.kjb」：Start → Transformation（read_config.ktr）→ Transformation（monitor.ktr）
+4. 排程改跑 Job：`kitchen.bat /file:D:\SystemCheck\kettle\monitor.kjb`
+
+之後要換 template、輸出資料夾或天數，只改 config.json。
 
 ### 填進檢核表（fill_check）
 
@@ -455,7 +496,10 @@ Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「
 
 - 可用絕對路徑、網路磁碟或共用資料夾路徑
 - Windows 路徑請用正斜線 `/`，或把反斜線寫兩次：`"D:\\週檢\\csv"`
-- 相對路徑以 config.json 所在資料夾為基準（包成 exe 時為 exe 所在資料夾）
+- 相對路徑以 config.json 所在資料夾為基準
+- 設定檔只有一份 `D:\SystemCheck\config.json`，三個程式共用：fill_check 依序找 exe 同資料夾、上一層
+  （`fill_check\fill_check.exe` → `D:\SystemCheck\config.json`）；monitor_check 讀同一層；Kettle 用 JSON input 讀。
+  執行時畫面與 log 第一行印出 `Config: <實際讀到的路徑>`
 
 ### 其他設定
 
@@ -482,11 +526,13 @@ Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「
 
 | 檔案 | 內容 |
 |---|---|
-| `SystemCheck.zip` | 解壓到 `D:\` 會得到 `D:\SystemCheck\`：`fill_check\`（含 `fill_check.exe`、`config.json`）、`search_ignore.exe`、`run_weekly.bat`、`EventLogCheck.ps1`、空的 `EventLog\`、`logs\` |
+| `SystemCheck.zip` | 解壓到 `D:\` 會得到 `D:\SystemCheck\`：`config.json`（共用）、`fill_check\`（`fill_check.exe` + `_internal\`）、`monitor_check.exe`、`search_ignore.exe`、`run_weekly.bat`、`EventLogCheck.ps1`、空的 `EventLog\`、`logs\` |
 | `search_ignore.exe` | 只要搜尋工具時單獨下載 |
 
 使用前：
-1. 修改 `D:\SystemCheck\fill_check\config.json` 的 `paths`（CSV、檢核表、追蹤表位置）
+1. 修改 `D:\SystemCheck\config.json` 的 `paths`、`check_sheet.template`、`monitor`（CSV、檢核表、追蹤表、template、監控資料夾）
+   - 從舊版升級：把 `fill_check\config.json` 移到 `D:\SystemCheck\`（取代新版的範例前先比對內容），
+     舊的 `monitor_check.json` 內容併進 `monitor` 段後刪除
 2. 準備 `D:\SystemCheck\serverlist.txt`（一行一台伺服器）
 3. 雙擊 `run_weekly.bat`
 
@@ -500,8 +546,8 @@ build_exe.bat
 | 程式 | 打包方式 | 產出 | 說明 |
 |---|---|---|---|
 | search_ignore | `--onefile`，排除 pandas/numpy/PIL/lxml | `dist\search_ignore.exe`（約 10 MB） | 單一檔案，複製到哪都能用 |
-| monitor_check | `--onefile`，排除 pandas/numpy/openpyxl/PIL/lxml | `dist\monitor_check.exe` | 單一檔案，`monitor_check.json` 放在旁邊 |
-| fill_check | `--onedir` | `dist\fill_check\` 資料夾 | 整個資料夾一起複製，`config.json` 放在 `fill_check.exe` 旁邊 |
+| monitor_check | `--onefile`，排除 pandas/numpy/openpyxl/PIL/lxml | `dist\monitor_check.exe` | 單一檔案，放在 `config.json` 同一層 |
+| fill_check | `--onedir` | `dist\fill_check\` 資料夾 | 整個資料夾一起複製到 `D:\SystemCheck\fill_check\`，讀上一層的 `config.json` |
 
 **為什麼不全部用 `--onefile`？** `--onefile` 每次啟動都要把整包程式解壓縮到暫存資料夾，
 公司防毒會逐一掃描解出來的檔案；含 pandas 的程式可能要等好幾分鐘才出現第一行文字。

@@ -37,7 +37,7 @@
     python fill_check.py [--week W2642]
     python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   （有給的參數會取代設定檔的路徑）
 
-設定檔: 與本程式同資料夾的 config.json
+設定檔: config.json，依序找本程式同資料夾、上一層（D:/SystemCheck/config.json，與 Kettle、monitor_check 共用）
     paths.csv_dir                             要讀取的 CSV 資料夾（可用 {week}/{yy}/{ww}，例: .../System Check/{week}/Reference/BOS）
     paths.check_xlsx                          要填寫 O/X 的檢核表（BOS_SystemCheck.xlsx）
                                               路徑中可寫 {week}，會換成 CSV 的週別（例: BOS_..._{week}.xlsx → _W2642.xlsx）
@@ -90,14 +90,21 @@ for _s in (sys.stdout, sys.stderr):
 
 
 def _base_dir():
-    """程式所在資料夾；包成執行檔（PyInstaller）時是 exe 所在資料夾，config.json 放在旁邊"""
+    """程式所在資料夾；包成執行檔（PyInstaller）時是 exe 所在資料夾"""
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
 
 
-BASE_DIR = _base_dir()
-CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+def find_config(app_dir):
+    """config.json：程式同資料夾 → 上一層（D:\\SystemCheck\\config.json，Kettle / monitor_check / fill_check 共用）
+    回傳 (找到的路徑或第一個候選, 所有候選)"""
+    cands = [os.path.join(app_dir, "config.json"), os.path.join(os.path.dirname(app_dir), "config.json")]
+    return next((p for p in cands if os.path.isfile(p)), cands[0]), cands
+
+
+CONFIG_PATH, CONFIG_CANDIDATES = find_config(_base_dir())
+BASE_DIR = os.path.dirname(CONFIG_PATH)  # 相對路徑以設定檔所在資料夾為基準
 
 
 def _path(p):
@@ -111,7 +118,8 @@ except Exception as _e:
     if __name__ != "__main__":
         raise
     # 設定檔讀不到時還不知道 log_dir，log 寫在預設的 logs 資料夾
-    _msg = f"[ERROR] Cannot read config file {CONFIG_PATH}: {type(_e).__name__}: {_e}"
+    _msg = (f"[ERROR] Cannot read config file {CONFIG_PATH}: {type(_e).__name__}: {_e}"
+            + ("" if os.path.isfile(CONFIG_PATH) else f"\n        (looked for: {', '.join(CONFIG_CANDIDATES)})"))
     print(_msg)
     os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
     with open(os.path.join(BASE_DIR, "logs", f"{datetime.now():%Y%m%d}.log"),
@@ -865,6 +873,7 @@ def run():
         sys.stdout = _Tee(console, log)
         try:
             print(f"\n===== fill_check start {datetime.now():%Y-%m-%d %H:%M:%S} =====")
+            print(f"Config: {CONFIG_PATH}")
             main()
         except SystemExit as e:
             code = e.code or 0

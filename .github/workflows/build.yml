@@ -236,8 +236,8 @@ jobs:
           $out = "SystemCheck"
           New-Item -ItemType Directory -Force $out, "$out\EventLog", "$out\logs" | Out-Null
           Copy-Item -Recurse dist\fill_check "$out\fill_check"
-          Copy-Item config.json "$out\fill_check\config.json"
-          Copy-Item dist\monitor_check.exe, monitor_check.json $out
+          # 共用設定檔放在根目錄：Kettle、monitor_check、fill_check 都讀 SystemCheck\config.json
+          Copy-Item config.json, dist\monitor_check.exe $out
           Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, EventLogCheck_Local.ps1, excluded_ids.txt, README.md $out
           Compress-Archive -Path $out -DestinationPath SystemCheck.zip
           Copy-Item dist\search_ignore.exe search_ignore.exe
@@ -252,10 +252,12 @@ jobs:
           $o = & .\SystemCheck\fill_check\fill_check.exe 2>&1 | Out-String
           Write-Output $o
           if ($LASTEXITCODE -ne 1 -or $o -notmatch "paths\.csv_dir") { throw "fill_check.exe did not start correctly: $LASTEXITCODE" }
-          # 監控分析：runner 上沒有 D:/export，應提示 CSV folder not found 並以 1 結束
+          if ($o -notmatch 'Config: .*SystemCheck\\config\.json') { throw "fill_check.exe did not read SystemCheck\config.json" }
+          # 監控分析：runner 上沒有 Kettle 週資料夾，應提示 CSV folder not found 並以 1 結束
           $o = & .\SystemCheck\monitor_check.exe 2>&1 | Out-String
           Write-Output $o
           if ($LASTEXITCODE -ne 1 -or $o -notmatch "CSV folder not found") { throw "monitor_check.exe did not start correctly: $LASTEXITCODE" }
+          if ($o -notmatch 'Config: .*SystemCheck\\config\.json') { throw "monitor_check.exe did not read SystemCheck\config.json" }
           exit 0
 
       - uses: actions/upload-artifact@v5
@@ -274,8 +276,9 @@ jobs:
           body: |
             - SystemCheck.zip：解壓到 D:\ 會得到 D:\SystemCheck（fill_check、search_ignore.exe、run_weekly.bat、EventLogCheck.ps1）
             - search_ignore.exe：可忽略事件ID 搜尋工具，單一檔案
-            - SystemCheck\monitor_check.exe：分析 Kettle 匯出的監控 CSV（超過 spec、持續上升），設定在 monitor_check.json
-            使用前請修改 SystemCheck\fill_check\config.json 的 paths
+            - SystemCheck\monitor_check.exe：分析 Kettle 匯出的監控 CSV（超過 spec、持續上升）
+            - 設定檔只有一份 SystemCheck\config.json（Kettle、monitor_check、fill_check 共用），使用前請修改其中的路徑
+            - 從舊版升級：把 fill_check\config.json 移到 SystemCheck\、刪除 monitor_check.json（內容改放 config.json 的 monitor 段）
           files: |
             SystemCheck.zip
             search_ignore.exe
