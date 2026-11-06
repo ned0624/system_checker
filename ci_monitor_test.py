@@ -20,24 +20,24 @@ os.makedirs(app)
 shutil.copy("monitor_check.py", app)
 y, w, _ = date.today().isocalendar()
 week = f"W{y % 100:02d}{w:02d}"
-export = os.path.join(tmp, week, "export")
+export = os.path.join(tmp, f"{y}-W{w:02d}")   # Kettle 週資料夾 %x-W%v
 os.makedirs(export)
-json.dump({"csv_dir": os.path.join(tmp, "{week}", "export"), "report_dir": os.path.join(tmp, "{week}", "report"),
+json.dump({"csv_dir": os.path.join(tmp, "{yyyy}-W{ww}"), "report_dir": os.path.join(tmp, "{week}", "report"),
            "log_dir": os.path.join(tmp, "logs")}, open(os.path.join(app, "monitor_check.json"), "w"))
 
 START = datetime(2026, 11, 3, 0, 0)
 N = 24 * 60
-HEADER = "time_min,cpu,memory,disk_c,disk_d,disk_e"
+HEADER = "time_min,cpu,memory,disk1,disk2,disk3"
 
 
-def write(name, spec, rows, header=True, enc="utf-8-sig"):
-    lines = ([HEADER] if header else []) + ["upper_spec," + spec]
+def write(name, spec, rows, header=True, enc="utf-8-sig", columns=HEADER):
+    lines = ([columns] if header else []) + ["upper_spec," + spec]
     lines += [f"{(START + timedelta(minutes=i)):%Y-%m-%d %H:%M}," + ",".join("" if v is None else f"{v:.2f}" for v in r)
               for i, r in enumerate(rows)]
     open(os.path.join(export, name), "w", encoding=enc, newline="").write("\r\n".join(lines) + "\r\n")
 
 
-# HOST-A: cpu 上下跳動 + 三段超標（20 / 5 / 1 分鐘）；memory 穩定上升；disk_c 持平；disk_d 先升後清掉；disk_e 空白
+# HOST-A: cpu 上下跳動 + 三段超標（20 / 5 / 1 分鐘）；memory 穩定上升；disk1 持平；disk2 先升後清掉；disk3 空白
 rows = []
 for i in range(N):
     cpu = 20 + 15 * math.sin(i / 37) + 0.002 * i
@@ -48,16 +48,22 @@ for i in range(N):
     elif i == 300:
         cpu = 61
     mem = 15 + 0.004 * i + 0.05 * math.sin(i * 1.7)
-    disk_d = 370 + 30 * i / 720 if i < 720 else 372
-    rows.append((cpu, mem, 30.0, disk_d, None))
+    disk2 = 370 + 30 * i / 720 if i < 720 else 372
+    rows.append((cpu, mem, 30.0, disk2, None))
 write("host-a.csv", "60.00,25.60,40.00,420.00,625.00", rows)
 
-# HOST-B: 無表頭、MS950；memory 上升但中途回落 2 → 不算持續上升；cpu 沒有 spec
-rows = [(10 + 0.001 * i, 15 + 0.005 * i - (2 if 600 <= i < 700 else 0), 20.0, 100.0, 50.0) for i in range(N)]
-write("host-b.csv", ",25.60,40.00,420.00,625.00", rows, header=False, enc="cp950")
+# HOST-B: 無表頭（time_min,cpu,memory,swap,...）、MS950；memory 上升但中途回落 2 → 不算持續上升；cpu 沒有 spec
+rows = [(10 + 0.001 * i, 15 + 0.005 * i - (2 if 600 <= i < 700 else 0), 5.0, 20.0, 100.0, 50.0) for i in range(N)]
+write("host-b.csv", ",25.60,10.00,40.00,420.00,625.00", rows, header=False, enc="cp950")
 
 # HOST-C: 壞檔 → WARN 但不中斷
 open(os.path.join(export, "host-c.csv"), "w").write("garbage\n1,2,3\n")
+
+# HOST-E: 只有時間沒有數值（Kettle SQL 的 monitor_item 對不到）→ WARN
+write("host-e.csv", ",", [(None, None)] * 120, columns="time_min,cpu,disk2")
+
+# HOST-F: 只打 O 部分欄位（cpu、disk2）→ 只分析這兩欄
+write("host-f.csv", "60.00,420.00", [(10.0, 300.0)] * 120, columns="time_min,cpu,disk2")
 
 # HOST-D: 只有 3 小時 → 不判定上升，超標照算
 rows = [(10.0, 30.0 if i == 10 else 20.0, 30.0, 300.0, 500.0) for i in range(180)]
@@ -84,15 +90,20 @@ assert a["over_first"] == "2026-11-03 01:40" and a["over_last"] == "2026-11-03 0
 assert a["max"] == "70.00" and a["rising"] == "N" and a["result"] == "OVER SPEC", a
 m = rep["HOST-A", "memory"]
 assert m["rising"] == "Y" and m["result"] == "RISING" and float(m["hours_to_spec"]) > 0, m
-assert rep["HOST-A", "disk_c"]["result"] == "OK"
-assert rep["HOST-A", "disk_d"]["rising"] == "N", rep["HOST-A", "disk_d"]
-assert rep["HOST-A", "disk_e"]["result"] == "NO DATA"
+assert rep["HOST-A", "disk1"]["result"] == "OK"
+assert rep["HOST-A", "disk2"]["rising"] == "N", rep["HOST-A", "disk2"]
+assert rep["HOST-A", "disk3"]["result"] == "NO DATA"
+assert rep["HOST-B", "swap"]["spec"] == "10.00" and rep["HOST-B", "disk3"]["result"] == "OK", rep["HOST-B", "disk3"]
+assert rep["HOST-E", "cpu"]["result"] == "NO DATA" and rep["HOST-E", "disk2"]["result"] == "NO DATA"
+assert sorted(m for h, m in rep if h == "HOST-F") == ["cpu", "disk2"]
+assert rep["HOST-F", "disk2"]["result"] == "OK" and rep["HOST-F", "disk2"]["spec"] == "420.00"
 assert rep["HOST-B", "memory"]["rising"] == "N", rep["HOST-B", "memory"]
 assert rep["HOST-B", "cpu"]["spec"] == "" and rep["HOST-B", "cpu"]["over_count"] == "0", rep["HOST-B", "cpu"]
 assert not any(h == "HOST-C" for h, _ in rep), "broken file should not be in report"
 d = rep["HOST-D", "memory"]
 assert d["over_count"] == "1" and d["rising"] == "-" and d["result"] == "OVER SPEC", d
 log = open(glob.glob(os.path.join(tmp, "logs", "*_monitor_check.log"))[0], encoding="utf-8-sig").read()
+assert "[WARN] HOST-E: 120 rows, no values in any column" in log, log
 assert "[WARN] HOST-C" in log and "[RISING] HOST-A memory" in log and "[OVER SPEC] HOST-A cpu" in log, log
 assert not os.path.exists(os.path.join(tmp, "{week}")), "literal {week} folder created"
 

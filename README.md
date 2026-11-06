@@ -298,17 +298,23 @@ ID> 200,1801
 
 ## 監控數據分析 monitor_check
 
-分析 Kettle（`monitor.ktr`）每天匯出的每台主機 CSV（`D:/export/<主機>.csv`，最近 1 天、每分鐘一筆）：
+分工：**Kettle 只負責撈資料，檢核由 monitor_check（Python）做**。超標用 SQL 也做得到，
+但「每小時平均、從最高點回落」的趨勢判定在 SQL/Kettle 很難寫、難測、難調門檻。
+
+分析 Kettle（`monitor.ktr`）每天匯出的每台主機 CSV（`D:\SystemCheck\2026-W45\<主機>.csv`，最近 1 天、每分鐘一筆，
+只有 template 打 O 的欄位）：
 
 ```
-time_min,cpu,memory,disk_c,disk_d,disk_e
-upper_spec,60.00,25.60,40.00,420.00,625.00
-2026-11-03 16:42,4.62,22.10,29.95,377.02,600.60
+time_min,cpu,memory,swap,disk1,disk2,disk3
+upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
+2026-11-03 16:42,4.62,22.10,1.20,29.95,377.02,600.60
 ```
 
 - 檔名 = 主機名稱；第一列可以是表頭，也可以直接是 `upper_spec`（沒表頭時欄位依上面順序）
-- `time_min` 以外的欄位都會分析，Kettle 之後加欄位不用改程式；空白值略過（例如沒有 E 槽）
+- `time_min` 以外的欄位都會分析，只打 O 部分欄位或 Kettle 之後加欄位都不用改程式；空白值略過
 - 編碼 UTF-8（含 BOM）或 MS950 都可以；讀不了的檔案顯示 `[WARN]` 後繼續下一台
+- **只有時間、每一欄都沒有數值**的檔案顯示 `[WARN] <主機>: no values in any column`，
+  通常是 Kettle SQL 的 `monitor_item` 對不到（例如 Linux 掛載點名稱不同），見下方「只有時間沒有數據」
 
 ### 檢查項目
 
@@ -321,14 +327,15 @@ upper_spec,60.00,25.60,40.00,420.00,625.00
 
 ```json
 {
-  "csv_dir": "D:/export",
+  "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
   "report_dir": "D:/SystemCheck/monitor_report",
   "log_dir": "D:/SystemCheck/logs",
   "trend": { "bucket_minutes": 60, "min_buckets": 6, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1 }
 }
 ```
 
-路徑可用 `{week}` / `{yy}` / `{ww}`（今天的 ISO 週）；相對路徑以 exe 所在資料夾為基準。
+路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww}`（今天的 ISO 週，例: W2645 / 2026 / 26 / 45），
+Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對路徑以 exe 所在資料夾為基準。
 
 ### 輸出
 
@@ -342,7 +349,7 @@ upper_spec,60.00,25.60,40.00,420.00,625.00
 
 ```
 monitor_check.exe              （讀 monitor_check.json 的 csv_dir）
-monitor_check.exe D:\export    （臨時指定 CSV 資料夾）
+monitor_check.exe D:\SystemCheck\2026-W44    （臨時指定 CSV 資料夾，例如補看上週）
 ```
 
 `monitor_check.exe` 是單一檔案、只用 Python 內建模組（不含 pandas），`monitor_check.json` 放在旁邊。
@@ -352,6 +359,37 @@ monitor_check.exe D:\export    （臨時指定 CSV 資料夾）
 call pan.bat /file:monitor.ktr
 D:\SystemCheck\monitor_check.exe
 ```
+
+### 只有時間沒有數據
+
+Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「沒打 O」的監控項目（例如 Traffic In/Out、
+名稱不同的 Linux 掛載點）。標題列有 `where exists`，但 upper_spec 列和數據列沒有過濾，
+所以只要主機有任何監控資料，就會照分鐘輸出「時間 + 空值」。
+
+1. 先查這台實際的 `monitor_item`，補齊 SQL 裡 `case ... in (...)` 的清單：
+   ```sql
+   select hostname, monitor_item, count(*) n, min(monitor_time), max(monitor_time)
+   from STM.monitor_system_history
+   where hostname in ('P3-APX-AP02V', 'T1-GUI-AP01P') and monitor_time > now() - interval 1 day
+   group by hostname, monitor_item order by hostname, monitor_item;
+   ```
+2. CTE `d` 只留「有打 O 且對得到」的項目，三段 union 都跟著正確，對不到的主機也不會產生檔案：
+   ```sql
+   d as (
+     select tm, item, monitor_data, upper_spec from (
+       select date_format(t.monitor_time, '%Y-%m-%d %H:%i') as tm,
+              case ... end as item,          -- 原本的 case 不變
+              t.monitor_data, t.upper_spec,
+              p.c_cpu, p.c_mem, p.c_swap, p.c_d1, p.c_d2, p.c_d3
+       from STM.monitor_system_history t join p on t.hostname = p.h
+       where t.monitor_time > now() - interval 1 day
+         and t.lm_time > now() - interval 1 day
+     ) x
+     where (item = 'cpu' and c_cpu) or (item = 'mem' and c_mem) or (item = 'swap' and c_swap)
+        or (item = 'd1' and c_d1) or (item = 'd2' and c_d2) or (item = 'd3' and c_d3)
+   )
+   ```
+   標題列的 `where exists (select 1 from d where d.item is not null)` 可改成 `where exists (select 1 from d)`。
 
 ## 設定檔 config.json
 

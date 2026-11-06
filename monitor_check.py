@@ -3,13 +3,14 @@
 監控數據分析：檢查 Kettle（monitor.ktr）匯出的每台主機 CSV
 
 CSV 格式（檔名 = 主機名稱，例: D:/export/p3-wfa-ap01v.csv）:
-    time_min,cpu,memory,disk_c,disk_d,disk_e
-    upper_spec,60.00,25.60,40.00,420.00,625.00
-    2026-11-03 16:42,4.62,22.10,29.95,377.02,600.60
+    time_min,cpu,memory,swap,disk1,disk2,disk3      （只有 template 打 O 的欄位）
+    upper_spec,60.00,25.60,,40.00,420.00,625.00
+    2026-11-03 16:42,4.62,22.10,,29.95,377.02,600.60
     ...（每分鐘一筆）
-    - 沒有表頭時（第一列就是 upper_spec），欄位依 time_min,cpu,memory,disk_c,disk_d,disk_e
+    - 沒有表頭時（第一列就是 upper_spec），欄位依 time_min,cpu,memory,swap,disk1,disk2,disk3
     - time_min 以外的欄位都當成指標分析；空白值略過（例: 主機沒有 E 槽）
     - 編碼 UTF-8（含 BOM）或 MS950 都可以
+    - 每一欄都沒有數值（只有時間）的主機顯示 [WARN]，通常是 Kettle SQL 的 monitor_item 對不到
 
 檢查項目（每台主機、每個指標）:
 1. 超過 spec：數值 > upper_spec 的筆數、首次/最後時間、最長連續分鐘數、最大值
@@ -25,7 +26,8 @@ CSV 格式（檔名 = 主機名稱，例: D:/export/p3-wfa-ap01v.csv）:
     monitor_check.exe [csv資料夾]          （有給參數會取代設定檔的 csv_dir）
 
 設定檔: 與本程式同資料夾的 monitor_check.json
-    csv_dir / report_dir / log_dir   路徑可用 {week}/{yy}/{ww}（今天的 ISO 週，例: W2645 / 26 / 45）
+    csv_dir / report_dir / log_dir   路徑可用 {week}/{yyyy}/{yy}/{ww}（今天的 ISO 週，例: W2645 / 2026 / 26 / 45）
+                                     Kettle 週資料夾 D:/SystemCheck/2026-W45 → D:/SystemCheck/{yyyy}-W{ww}
                                      相對路徑以設定檔所在資料夾為基準
     trend.bucket_minutes             幾分鐘取一次平均（預設 60）
     trend.min_buckets                至少幾段才判定上升（預設 6）
@@ -43,7 +45,7 @@ import sys
 import traceback
 from datetime import date, datetime, timedelta
 
-DEFAULT_COLUMNS = ["time_min", "cpu", "memory", "disk_c", "disk_d", "disk_e"]
+DEFAULT_COLUMNS = ["time_min", "cpu", "memory", "swap", "disk1", "disk2", "disk3"]
 SPEC_ROW = "upper_spec"
 TIME_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d %H:%M:%S")
 REPORT_HEADER = ["host", "metric", "spec", "max", "max_time", "over_count", "over_first", "over_last",
@@ -69,8 +71,10 @@ def week_label(d):
 
 
 def week_path(path, week):
-    """路徑中的 {week}/{yy}/{ww} 換成週別，例: W2645 / 26 / 45"""
-    return path.replace("{week}", week).replace("{yy}", week[1:3]).replace("{ww}", week[3:5])
+    """路徑中的 {week}/{yyyy}/{yy}/{ww} 換成週別，例: W2645 / 2026 / 26 / 45
+    Kettle 的 %x-W%v（2026-W45）= {yyyy}-W{ww}"""
+    return (path.replace("{week}", week).replace("{yyyy}", "20" + week[1:3])
+            .replace("{yy}", week[1:3]).replace("{ww}", week[3:5]))
 
 
 def resolve(p, week):
@@ -253,10 +257,16 @@ def main(cfg, week, csv_dir):
             metrics, spec, data, skipped = load_host(p)
         except Exception as e:
             print(f"  [WARN] {host}: cannot read {p}: {e}")
-            warns.append(host)
+            warns.append((host, "file not read, see above"))
             continue
         res = analyze(host, metrics, spec, data, trend)
         rows += res
+        if all(r["result"] == "NO DATA" for r in res):
+            # 只有時間沒有數值：通常是 Kettle SQL 的 monitor_item 對不到
+            msg = "no values in any column (check monitor_item mapping in Kettle SQL)"
+            print(f"  [WARN] {host}: {len(data)} rows, {msg}")
+            warns.append((host, msg))
+            continue
         bad = [r for r in res if r["result"] not in ("OK", "NO DATA")]
         findings += bad
         note = f", skipped {skipped} rows with bad time" if skipped else ""
@@ -276,11 +286,11 @@ def main(cfg, week, csv_dir):
         print(f"[ERROR] Cannot write report {report}: {e}")
         return 1
 
-    print(f"\n===== Done: {len(files)} files, {len(findings)} findings, {len(warns)} files not read =====")
+    print(f"\n===== Done: {len(files)} files, {len(findings)} findings, {len(warns)} warnings =====")
     for r in findings:
         print(f"  [{r['result']}] {r['host']} {describe(r)}")
-    for h in warns:
-        print(f"  [WARN] {h}: file not read, see above")
+    for h, msg in warns:
+        print(f"  [WARN] {h}: {msg}")
     print(f"Report: {report}")
     return 0
 

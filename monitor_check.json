@@ -1,5 +1,5 @@
 {
-  "csv_dir": "D:/export",
+  "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
   "report_dir": "D:/SystemCheck/monitor_report",
   "log_dir": "D:/SystemCheck/logs",
   "trend": {
