@@ -350,6 +350,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
     "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
     "days": 7,
     "report_dir": "D:/SystemCheck/monitor_report",
+    "x_over_minutes": 5,
     "columns": {"CPU": "cpu", "Memory": "memory", "SWAP": "swap", "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"},
     "trend": null
 }
@@ -360,6 +361,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 每週監控 CSV 資料夾 |
 | `days` | Kettle | 撈最近幾天（SQL 的 `interval ${DAYS} day`） |
 | `report_dir` | monitor_check | 報表輸出資料夾 |
+| `x_over_minutes` | fill_check | 連續超過 spec 幾分鐘以上才在檢核表填 X（預設 5）；報表的 `OVER SPEC` 仍列出所有超標 |
 | `columns` | fill_check | 檢核表 / template 的監控欄標題 → CSV 欄位 |
 | `trend` | monitor_check、fill_check | 持續上升門檻，null = 預設 `{"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1}` |
 
@@ -440,7 +442,8 @@ Kettle 不寫死路徑，template、輸出資料夾、天數都從 `D:\SystemChe
 | 狀況 | 格子 | 備註 |
 |---|---|---|
 | 範本**沒打 O** | 不動 | — |
-| 有打 O、超過 spec | X | `[監控] CPU 超過 spec 60.00 共 30 分鐘，最長連續 30 分鐘，最高 75.00（10/13 11:00）` |
+| 有打 O、超過 spec 且**連續 ≥ 5 分鐘** | X | `[監控] CPU 超過 spec 60.00 共 30 分鐘，最長連續 30 分鐘，最高 75.00（10/13 11:00）` |
+| 有打 O、超過 spec 但最長連續 < 5 分鐘 | O | `[監控] CPU 超過 spec 60.00 共 7 分鐘，最長連續 4 分鐘，最高 75.00（10/11 10:40）` |
 | 有打 O、持續上升（沒超標） | O | `[監控] Memory 持續上升 15.43 → 20.62，約 5.8 天達 spec` |
 | 有打 O、正常 | O | — |
 | 有打 O、沒有 CSV 或該欄沒數值 | 空白 | `[監控] Memory 無監控資料` |

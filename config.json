@@ -44,6 +44,7 @@
         "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
         "days": 7,
         "report_dir": "D:/SystemCheck/monitor_report",
+        "x_over_minutes": 5,
         "columns": {
             "CPU": "cpu",
             "Memory": "memory",

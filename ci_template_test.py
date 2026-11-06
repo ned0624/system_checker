@@ -125,8 +125,9 @@ if MODE == "monitor":
     kettle_csv("SRV-A", "time_min,cpu,memory,disk2", "60.00,25.60,420.00",
                [(75.0 if 3000 <= i < 3030 else 20 + 10 * math.sin(2 * math.pi * i / DAY), 15 + 0.0006 * i, 300.0)
                 for i in range(7 * DAY)])
-    # SRV-B: cpu 正常 → O；memory 打 O 但沒有數值 → 空白 + 備註
-    kettle_csv("SRV-B", "time_min,cpu,memory", "60.00,25.60", [(20.0, None)] * (7 * DAY))
+    # SRV-B: cpu 超標但最長只連續 4 分鐘（不到 5 分鐘）→ O + 備註；memory 打 O 但沒有數值 → 空白 + 備註
+    kettle_csv("SRV-B", "time_min,cpu,memory", "60.00,25.60",
+               [(75.0 if 100 <= i < 104 or 500 <= i < 503 else 20.0, None) for i in range(7 * DAY)])
     # SRV-D: 沒有 CSV → CPU 空白 + 備註
 json.dump(cfg, open(os.path.join(tmp if MODE == "weekdir" else app, "config.json"), "w", encoding="utf-8"),
           ensure_ascii=False, indent=2)
@@ -189,7 +190,8 @@ if MODE == "monitor":
     assert "1801" in v("H2") and "[監控] CPU 超過 spec 60.00 共 30 分鐘" in v("H2"), v("H2")
     assert "[監控] Memory 持續上升" in v("H2") and "Disk 2" not in v("H2"), v("H2")
     assert (v("F3"), v("I3"), v("J3")) == ("O", None, None), (v("F3"), v("I3"), v("J3"))
-    assert v("H3") == "[監控] Memory 無監控資料", v("H3")
+    assert v("H3").split("\n") == ["[監控] CPU 超過 spec 60.00 共 7 分鐘，最長連續 4 分鐘，最高 75.00（10/11 10:40）",
+                                    "[監控] Memory 無監控資料"], v("H3")
     assert v("F5") is None and v("H5") == "[監控] CPU 無監控資料", (v("F5"), v("H5"))
     assert v("F7") is None and v("I7") is None, (v("F7"), v("I7"))
     first_notes = (v("H2"), v("H3"), v("H5"))

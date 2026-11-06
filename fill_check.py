@@ -61,7 +61,8 @@
     monitor.csv_dir                           Kettle 匯出的監控 CSV 資料夾（例: D:/SystemCheck/{yyyy}-W{ww}），沒設定就不填監控欄
     monitor.columns                           檢核表監控欄標題 → CSV 欄位（CPU→cpu、Memory→memory、Disk 2→disk2…）
     monitor.trend                             持續上升門檻，null = 用 monitor_check 的預設（每天平均）
-                                              只填範本中打 O 的格子：超過 spec → X，否則 O；打 O 但沒數據 → 空白；
+    monitor.x_over_minutes                    連續超過 spec 幾分鐘以上才填 X（預設 5）
+                                              只填範本中打 O 的格子：連續超過 spec ≥ 5 分鐘 → X，否則 O；打 O 但沒數據 → 空白；
                                               超標、持續上升、沒數據寫進備註（[監控] 開頭，重跑時先移除再寫）
     log_dir                                   log 資料夾，省略 = logs，可用 {week}/{yy}/{ww}（依日期命名，例: 20261016.log；同一天多次執行附加在同一檔）
     路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
@@ -176,6 +177,7 @@ MONITOR_CSV_DIR = _path(_mon.get("csv_dir"))
 MONITOR_COLUMNS = _mon.get("columns") or {"CPU": "cpu", "Memory": "memory", "SWAP": "swap",
                                           "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"}
 MONITOR_TREND   = _mon.get("trend")
+MONITOR_X_MINUTES = int(_mon.get("x_over_minutes", 5))  # 連續超過 spec 幾分鐘以上才填 X
 MONITOR_NOTE    = "[監控]"  # 備註中監控的行以此開頭，重跑時先移除再寫
 
 # Excel 被別人開著（鎖住）時：每 retry_seconds 秒重試，最多等 max_wait_minutes 分鐘（0 = 不等）
@@ -461,7 +463,8 @@ def plan_monitor(week, marks, problems):
                 values[head] = None  # 有打 O 但沒有數據：留空白，備註提醒
                 notes.append(f"{MONITOR_NOTE} {head} 無監控資料")
                 continue
-            values[head] = "X" if r["over_count"] else "O"  # 只有超標填 X；持續上升只寫備註
+            # 超過 spec 且連續 ≥ MONITOR_X_MINUTES 分鐘才填 X；較短的超標與持續上升只寫備註
+            values[head] = "X" if r.get("longest_over_min", 0) >= MONITOR_X_MINUTES else "O"
             note = mc.note_text(r, head)
             if note:
                 notes.append(note)
