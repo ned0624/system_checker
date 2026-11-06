@@ -354,7 +354,7 @@ Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對�
 ### 輸出
 
 - 報表 `report_dir\yyyyMMdd_monitor_report.csv`（Excel 可直接開），一台主機一個指標一列：
-  `host, metric, spec, max, max_time, over_count, over_first, over_last, longest_over_min, rise, rising, hours_to_spec, result`
+  `host, result, metric, spec, max, max_time, over_count, over_first, over_last, longest_over_min, rise, rising, hours_to_spec`
 
   | 欄位 | 意思 |
   |---|---|

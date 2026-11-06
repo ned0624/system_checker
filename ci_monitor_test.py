@@ -92,6 +92,7 @@ reports = glob.glob(os.path.join(tmp, week, "report", "*_monitor_report.csv"))
 assert len(reports) == 1, f"report not in week folder: {reports}"
 rep = {(x["host"], x["metric"]): x for x in csv.DictReader(open(reports[0], encoding="utf-8-sig"))}
 header = open(reports[0], encoding="utf-8-sig").readline()
+assert header.startswith("host,result,metric,"), header
 assert "first_hour_avg" not in header and "last_hour_avg" not in header and "max_drop" not in header, header
 
 a = rep["HOST-A", "cpu"]

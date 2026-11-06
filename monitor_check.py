@@ -51,8 +51,8 @@ from datetime import date, datetime, timedelta
 DEFAULT_COLUMNS = ["time_min", "cpu", "memory", "swap", "disk1", "disk2", "disk3"]
 SPEC_ROW = "upper_spec"
 TIME_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d %H:%M:%S")
-REPORT_HEADER = ["host", "metric", "spec", "max", "max_time", "over_count", "over_first", "over_last",
-                 "longest_over_min", "rise", "rising", "hours_to_spec", "result"]
+REPORT_HEADER = ["host", "result", "metric", "spec", "max", "max_time", "over_count", "over_first", "over_last",
+                 "longest_over_min", "rise", "rising", "hours_to_spec"]
 # 持續上升判定預設：每天平均（Kettle 撈 7 天），至少 3 天才判定；fill_check 也用這組
 DEFAULT_TREND = {"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1}
 
