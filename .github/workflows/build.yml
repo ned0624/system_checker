@@ -49,6 +49,12 @@ jobs:
           python ci_monitor_test.py "$env:RUNNER_TEMP\mon"
           if ($LASTEXITCODE -ne 0) { throw "monitor_check test failed" }
 
+      - name: run_weekly.bat flow (event log -> Kettle -> monitor_check -> fill_check, with stubs)
+        shell: powershell
+        run: |
+          python ci_run_weekly_test.py "$env:RUNNER_TEMP\rw"
+          if ($LASTEXITCODE -ne 0) { throw "run_weekly.bat flow test failed" }
+
       - name: Check .bat.txt copies are in sync
         shell: bash
         run: |

@@ -34,7 +34,8 @@
    - 只處理本週（或 --week 指定週）的 CSV，同一台有多次取最新日期
 
 用法:
-    python fill_check.py [--week W2642]
+    python fill_check.py [--week W2642] [--clear-monitor]
+    --clear-monitor：監控步驟（Kettle / monitor_check）失敗時由 run_weekly.bat 加上，範本打 O 的監控格子清空
     python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   （有給的參數會取代設定檔的路徑）
 
 設定檔: config.json，依序找本程式同資料夾、上一層（D:/SystemCheck/config.json，與 Kettle、monitor_check 共用）
@@ -431,14 +432,19 @@ def monitor_columns(ws):
     return {h: headers[h] for h in MONITOR_COLUMNS if h in headers}
 
 
+def clear_monitor(marks):
+    """監控步驟失敗或沒有資料：打 O 的監控格子全部清空、不寫 [監控] 備註"""
+    return {host: ({h: None for h in heads}, []) for host, heads in marks.items()}
+
+
 def plan_monitor(week, marks, problems):
-    """分析本週監控 CSV → {伺服器: ({欄位標題: "O"/"X"/None}, [備註])}；資料夾不存在回傳 None（不填）"""
+    """分析本週監控 CSV → {伺服器: ({欄位標題: "O"/"X"/None}, [備註])}；資料夾不存在 → 全部清空"""
     import monitor_check as mc
     csv_dir = week_path(MONITOR_CSV_DIR, week)
     if not os.path.isdir(csv_dir):
-        print(f"[WARN] Monitor CSV folder not found: {csv_dir} - monitor columns not filled")
-        problems.append(("monitor", f"WARN: monitor CSV folder not found ({csv_dir}), monitor columns not filled"))
-        return None
+        print(f"\n[WARN] Monitor CSV folder not found: {csv_dir} - monitor columns cleared")
+        problems.append(("monitor", f"WARN: monitor CSV folder not found ({csv_dir}), monitor columns cleared"))
+        return clear_monitor(marks)
     hosts = mc.analyze_folder(csv_dir, mc.trend_config(MONITOR_TREND))
     print(f"\nMonitor CSV folder: {csv_dir} ({len(hosts)} files)")
     for host, h in hosts.items():
@@ -674,8 +680,11 @@ class _Locked(Exception):
 
 
 def parse_args(argv):
-    """[--week W2642] [csv資料夾] [檢核表xlsx] [追蹤表xlsx]"""
+    """[--week W2642] [--clear-monitor] [csv資料夾] [檢核表xlsx] [追蹤表xlsx] → (args, week, clear_monitor)"""
     args, week = list(argv), None
+    clear = "--clear-monitor" in args  # run_weekly.bat：Kettle 或 monitor_check 失敗時加上，監控欄清空
+    if clear:
+        args.remove("--clear-monitor")
     if "--week" in args:
         k = args.index("--week")
         week = args[k + 1].upper() if k + 1 < len(args) else ""
@@ -683,11 +692,11 @@ def parse_args(argv):
         if not re.fullmatch(r"W\d{4}", week):
             print(f"[ERROR] --week must look like W2642, got '{week}'")
             sys.exit(1)
-    return args, week
+    return args, week, clear
 
 
 def main():
-    args, week = parse_args(sys.argv[1:])
+    args, week, clear = parse_args(sys.argv[1:])
     csv_dir = args[0] if len(args) > 0 else CSV_DIR
     check_xlsx = args[1] if len(args) > 1 else CHECK_XLSX
     track_xlsx = args[2] if len(args) > 2 else TRACK_XLSX
@@ -775,7 +784,11 @@ def main():
     monitor = None
     if MONITOR_CSV_DIR:
         marks = monitor_marks(week_path(TEMPLATE_XLSX, week) if template_mode else check_src)
-        if marks:
+        if marks and clear:
+            print("\n[WARN] Monitor step failed (Kettle or monitor_check) - monitor columns cleared")
+            problems.append(("monitor", "WARN: monitor step failed, monitor columns cleared"))
+            monitor = clear_monitor(marks)
+        elif marks:
             monitor = plan_monitor(week, marks, problems)
         else:
             print(f"\n[WARN] No monitor column ({', '.join(MONITOR_COLUMNS)}) marked O in the check sheet")

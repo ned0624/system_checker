@@ -132,8 +132,8 @@ json.dump(cfg, open(os.path.join(tmp if MODE == "weekdir" else app, "config.json
           ensure_ascii=False, indent=2)
 
 
-def run():
-    r = subprocess.run([sys.executable, os.path.join(app, "fill_check.py"), "--week", "W2642"],
+def run(*extra):
+    r = subprocess.run([sys.executable, os.path.join(app, "fill_check.py"), "--week", "W2642", *extra],
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
     print(r.stdout, r.stderr)
@@ -209,13 +209,21 @@ assert ws[MANUAL].value == "manual 30%", ws[MANUAL].value
 if MODE == "monitor":   # 重跑：打 O 從範本讀，[監控] 備註不重複
     assert (ws["F2"].value, ws["I3"].value, ws["F5"].value) == ("X", None, None)
     assert (ws["H2"].value, ws["H3"].value, ws["H5"].value) == first_notes, (ws["H2"].value, first_notes)
-    # Kettle 資料夾不存在：WARN，監控欄維持範本的 O
+    # --clear-monitor（run_weekly.bat：Kettle / monitor_check 失敗）：有 CSV 也清空，[監控] 備註移除，事件欄照常
+    o = run("--clear-monitor")
+    assert "monitor columns cleared" in o, o
+    ws = openpyxl.load_workbook(out).active
+    assert (ws["F2"].value, ws["I2"].value, ws["J2"].value, ws["F3"].value, ws["F5"].value) == (None,) * 5
+    assert "[監控]" not in ws["H2"].value and "1801" in ws["H2"].value, ws["H2"].value
+    assert ws["H3"].value is None and ws["C2"].value == "X", (ws["H3"].value, ws["C2"].value)
+    # Kettle 資料夾不存在：WARN，監控欄同樣清空
     os.remove(out)
     shutil.rmtree(KETTLE)
     o = run()
-    assert "Monitor CSV folder not found" in o, o
+    assert "Monitor CSV folder not found" in o and "monitor columns cleared" in o, o
     ws = openpyxl.load_workbook(out).active
-    assert (ws["F2"].value, ws["I2"].value, ws["F5"].value) == ("O", "O", "O"), (ws["F2"].value, ws["F5"].value)
+    assert (ws["F2"].value, ws["I2"].value, ws["F5"].value) == (None, None, None), (ws["F2"].value, ws["F5"].value)
+    assert "[監控]" not in ws["H2"].value, ws["H2"].value
 assert ws["C2"].value == "X"
 assert ws["G2"].value == ("BOS - SRV-A_Evidence_W42" if MODE == "ruletext" else "SRV-A_Evidence_W42"), ws["G2"].value
 print(f"TEMPLATE TEST OK ({MODE})")
