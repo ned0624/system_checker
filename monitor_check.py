@@ -16,7 +16,7 @@ CSV 格式（檔名 = 主機名稱，例: D:/SystemCheck/2026-W45/P3-WFA-AP01V.c
 1. 超過 spec：數值 > upper_spec 的筆數、首次/最後時間、最長連續分鐘數、最大值
 2. 持續上升沒降下來：每天（trend.bucket_minutes）取平均（從最後一筆往回切，最舊不完整的一天捨棄），
    整段升幅 ≥ spec × min_rise_pct_of_spec%，且過程中從最高點回落 ≤ spec × max_drop_pct_of_spec%，
-   而且最後沒有降下來：最後一分鐘的值比最後一天平均低超過升幅的 end_drop_pct_of_rise%（預設 50）就不算
+   而且最後沒有降下來：最後 edge_minutes 分鐘平均 − 最前 edge_minutes 分鐘平均（預設 60）也要 ≥ spec × min_rise_pct_of_spec%
    （沒有 spec 時以第一段平均為基準）；判定上升時估算照目前速度約幾小時後達 spec
 fill_check 也 import 本程式（analyze_folder / note_text），把結果填進檢核表的 CPU/Memory/... 欄與備註
 
@@ -37,7 +37,7 @@ fill_check 也 import 本程式（analyze_folder / note_text），把結果填�
     trend.min_buckets                至少幾段才判定上升（預設 3）
     trend.min_rise_pct_of_spec       升幅門檻，spec 的百分比（預設 5）
     trend.max_drop_pct_of_spec       回落容許值，spec 的百分比（預設 1）
-    trend.end_drop_pct_of_rise       最後一分鐘比最後一天平均低超過升幅的幾 % 算「已降下來」（預設 50）
+    trend.edge_minutes               頭尾各取幾分鐘平均來比較，判斷最後有沒有降下來（預設 60）
 
 結束碼: 0 = 完成（不論有沒有發現問題），1 = 錯誤（設定檔、CSV 資料夾、報表或 log 寫入失敗）
 只用 Python 內建模組，打包成單一 exe（不需要 pandas）
@@ -57,7 +57,7 @@ REPORT_HEADER = ["host", "result", "metric", "spec", "max", "max_time", "over_co
                  "longest_over_min", "rise", "rising", "hours_to_spec"]
 # 持續上升判定預設：每天平均（Kettle 撈 7 天），至少 3 天才判定；fill_check 也用這組
 DEFAULT_TREND = {"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1,
-                 "end_drop_pct_of_rise": 50}
+                 "edge_minutes": 60}
 
 
 def _base_dir():
@@ -207,7 +207,13 @@ def check_trend(points, spec, cfg):
     if len(keys) > 1 and sums[keys[0]][1] < max(c for _, c in sums.values()) / 2:
         keys = keys[1:]
     avgs = [sums[k][0] / sums[k][1] for k in keys]
-    res = {"first_avg": avgs[0], "last_avg": avgs[-1], "rise": None, "max_drop": None,
+    # 頭尾各 edge_minutes 分鐘的平均：最後降下來（尾 − 頭沒有超過門檻）就不算持續上升，平均可去掉每分鐘的雜訊
+    edge = timedelta(minutes=cfg.get("edge_minutes", 60))
+    start = points[0][0]
+    head = [v for t, v in points if t - start < edge]
+    tail = [v for t, v in points if end - t < edge]
+    start_avg, end_avg = sum(head) / len(head), sum(tail) / len(tail)
+    res = {"start_avg": start_avg, "end_avg": end_avg, "rise": end_avg - start_avg, "max_drop": None,
            "rising": "-", "hours_to_spec": None}
     if len(avgs) < cfg["min_buckets"]:
         return res
@@ -215,22 +221,18 @@ def check_trend(points, spec, cfg):
     for a in avgs:
         peak = max(peak, a)
         drop = max(drop, peak - a)
-    rise = avgs[-1] - avgs[0]
-    res.update(rise=rise, max_drop=drop)
+    res["max_drop"] = drop
     base = spec if spec else avgs[0]
     if not base or base <= 0:
         return res
-    rising = rise >= base * cfg["min_rise_pct_of_spec"] / 100 and drop <= base * cfg["max_drop_pct_of_spec"] / 100
-    # 最後有沒有降下來：最後一分鐘的值回落超過升幅的 end_drop_pct_of_rise%（預設一半）就不算持續上升
-    # 例: 第一天平均 3.6、最後一天平均 4.0（升幅 0.4），最後一分鐘 < 3.8 → 已降下來
-    res["last_value"] = points[-1][1]
-    if rising and points[-1][1] < avgs[-1] - rise * cfg.get("end_drop_pct_of_rise", 50) / 100:
-        rising = False
-        res["dropped_at_end"] = True
+    need = base * cfg["min_rise_pct_of_spec"] / 100
+    rising = (avgs[-1] - avgs[0] >= need                                   # 每日平均一週升幅
+              and drop <= base * cfg["max_drop_pct_of_spec"] / 100       # 中間沒有明顯回落
+              and end_avg - start_avg >= need)                          # 最後沒有降下來
     res["rising"] = "Y" if rising else "N"
-    hours = (keys[0] - keys[-1]) * bucket / 60
-    if rising and spec and hours > 0 and avgs[-1] < spec:
-        res["hours_to_spec"] = (spec - avgs[-1]) / (rise / hours)
+    hours = (end - start - edge).total_seconds() / 3600  # 頭尾兩段中點之間的時數
+    if rising and spec and hours > 0 and end_avg < spec:
+        res["hours_to_spec"] = (spec - end_avg) / ((end_avg - start_avg) / hours)
     return res
 
 
@@ -271,7 +273,7 @@ def describe(r):
         parts.append(f"over spec {fmt(r['spec'])}: {r['over_count']} min, longest {r['longest_over_min']} min, "
                      f"max {fmt(r['max'])} at {fmt(r['max_time'])}")
     if r.get("rising") == "Y":
-        s = f"rising {fmt(r['first_avg'])} -> {fmt(r['last_avg'])}"
+        s = f"rising {fmt(r['start_avg'])} -> {fmt(r['end_avg'])}"
         if r.get("hours_to_spec") is not None:
             s += f", reaches spec in ~{r['hours_to_spec']:.1f} h"
         parts.append(s)
@@ -315,7 +317,7 @@ def note_text(r, label=None):
         parts.append(f"超過 spec {fmt(r['spec'])} 共 {r['over_count']} 分鐘，最長連續 {r['longest_over_min']} 分鐘，"
                      f"最高 {fmt(r['max'])}（{r['max_time']:%m/%d %H:%M}）")
     if r.get("rising") == "Y":
-        s = f"持續上升 {fmt(r['first_avg'])} → {fmt(r['last_avg'])}"
+        s = f"持續上升 {fmt(r['start_avg'])} → {fmt(r['end_avg'])}"
         h = r.get("hours_to_spec")
         if h is not None:
             s += f"，約 {h / 24:.1f} 天達 spec" if h >= 48 else f"，約 {h:.1f} 小時達 spec"

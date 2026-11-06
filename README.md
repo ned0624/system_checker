@@ -341,7 +341,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | 項目 | 判定 |
 |---|---|
 | 超過 spec | 數值 > `upper_spec`；記錄超標分鐘數、首次/最後時間、最長連續分鐘數、最大值與時間。spec 空白則不檢查 |
-| 持續上升沒降下來 | 每天取平均（從最後一筆往回每 24 小時一段，最舊不完整的一天捨棄），一週升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%，**而且最後沒有降下來**：最後一分鐘的值比最後一天平均低超過升幅的一半（`end_drop_pct_of_rise`，預設 50）就不算持續上升（例：第一天 3.6、最後一天 4.0，最後一分鐘 < 3.8 → 已降下來）。日夜起伏、上下跳動的不會誤判；判定上升時估算照目前速度約幾小時（天）後達 spec。不足 3 天的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一天平均為基準 |
+| 持續上升沒降下來 | 每天取平均（從最後一筆往回每 24 小時一段，最舊不完整的一天捨棄），一週升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%，**而且最後沒有降下來**：最後 60 分鐘平均 − 最前 60 分鐘平均（`edge_minutes`）也要 ≥ spec 的 5%，否則不算持續上升（例：spec 4.8，開始 60 分鐘平均 3.6、最後 60 分鐘平均 3.7，差 0.1 < 0.24 → 已降下來）。報表的 `rise` 就是這個頭尾平均差。日夜起伏、上下跳動的不會誤判；判定上升時估算照目前速度約幾小時（天）後達 spec。不足 3 天的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一天平均為基準 |
 
 設定在共用 `config.json` 的 `monitor` 段（Kettle、monitor_check、fill_check 都讀這段）：
 
@@ -363,7 +363,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | `report_dir` | monitor_check | 報表輸出資料夾 |
 | `x_over_minutes` | fill_check | 連續超過 spec 幾分鐘以上才在檢核表填 X（預設 5）；報表的 `OVER SPEC` 仍列出所有超標 |
 | `columns` | fill_check | 檢核表 / template 的監控欄標題 → CSV 欄位 |
-| `trend` | monitor_check、fill_check | 持續上升門檻，null = 預設 `{"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1, "end_drop_pct_of_rise": 50}` |
+| `trend` | monitor_check、fill_check | 持續上升門檻，null = 預設 `{"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1, "edge_minutes": 60}` |
 
 log 寫到頂層的 `log_dir`。路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww}`（今天的 ISO 週，例: W2645 / 2026 / 26 / 45），
 Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對路徑以 config.json 所在資料夾為基準。
@@ -380,7 +380,7 @@ Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對�
   | max / max_time | 一週最大值與時間 |
   | over_count / over_first / over_last | 超過 spec 的分鐘數、第一次與最後一次時間 |
   | longest_over_min | 最長連續超標分鐘數 |
-  | rise | 升幅（最後一天平均 − 第一天平均） |
+  | rise | 升幅（最後 60 分鐘平均 − 最前 60 分鐘平均） |
   | rising | Y = 持續上升、N = 沒有、`-` = 資料不足 |
   | hours_to_spec | 持續上升時，照目前速度約幾小時到 spec |
   - `result`：`OK` / `OVER SPEC` / `RISING` / `OVER SPEC+RISING` / `NO DATA`

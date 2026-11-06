@@ -73,15 +73,19 @@ write("host-f.csv", "60.00,420.00", [(10.0, 300.0)] * 120, columns="time_min,cpu
 rows = [(30 + 25 * math.sin(2 * math.pi * (i + 517) / DAY - 1.2),) for i in range(N)]
 write("host-g.csv", "60.00", rows, columns="time_min,cpu", start=START + timedelta(minutes=517))
 
-# HOST-H: memory 每天上升，但最後一分鐘降回起點 → 已降下來，不算持續上升
-rows = [(15 + 0.0005 * i + 0.1 * math.sin(i / 7),) for i in range(N - 1)] + [(15.0,)]
+# HOST-H: memory 每天上升，但最後 60 分鐘降回起點 → 已降下來，不算持續上升
+rows = [(15 + 0.0005 * i + 0.1 * math.sin(i / 7),) for i in range(N - 60)] + [(15.0,)] * 60
 write("host-h.csv", "25.60", rows, columns="time_min,memory")
+
+# HOST-K: 同上但最後 60 分鐘降到比開始高 1.0（< spec 25.6 的 5% = 1.28）→ 不算持續上升
+rows = [(15 + 0.0005 * i + 0.1 * math.sin(i / 7),) for i in range(N - 60)] + [(16.0,)] * 60
+write("host-k.csv", "25.60", rows, columns="time_min,memory")
 
 # HOST-I: 像使用者附圖：前 6 天慢慢上升、最後一天前降回起點並維持 → 不算持續上升
 rows = [((3.6 + 0.45 * i / (6 * DAY) if i < 6 * DAY - 300 else 3.6) + 0.1 * math.sin(i / 3),) for i in range(N)]
 write("host-i.csv", "4.80", rows, columns="time_min,memory")
 
-# HOST-J: 同 HOST-H 但最後一分鐘只是小幅雜訊（沒有回落一半以上）→ 仍是持續上升
+# HOST-J: 一路上升，最後一分鐘小幅下跌（雜訊）→ 仍是持續上升
 rows = [(15 + 0.0005 * i + 0.1 * math.sin(i / 7),) for i in range(N - 1)] + [(15 + 0.0005 * N - 0.3,)]
 write("host-j.csv", "25.60", rows, columns="time_min,memory")
 
@@ -123,7 +127,8 @@ assert rep["HOST-F", "disk2"]["result"] == "OK" and rep["HOST-F", "disk2"]["spec
 assert rep["HOST-B", "memory"]["rising"] == "N", rep["HOST-B", "memory"]
 assert rep["HOST-H", "memory"]["rising"] == "N" and rep["HOST-H", "memory"]["result"] == "OK", rep["HOST-H", "memory"]
 assert rep["HOST-I", "memory"]["rising"] == "N", rep["HOST-I", "memory"]
-assert rep["HOST-J", "memory"]["rising"] == "Y", rep["HOST-J", "memory"]
+assert rep["HOST-J", "memory"]["rising"] == "Y", rep["HOST-J", "memory"]   # 最後一分鐘的小跌被 60 分鐘平均吸收
+assert rep["HOST-K", "memory"]["rising"] == "N" and float(rep["HOST-K", "memory"]["rise"]) < 1.28, rep["HOST-K", "memory"]
 assert rep["HOST-G", "cpu"]["rising"] == "N" and rep["HOST-G", "cpu"]["result"] == "OK", rep["HOST-G", "cpu"]
 assert rep["HOST-B", "cpu"]["spec"] == "" and rep["HOST-B", "cpu"]["over_count"] == "0", rep["HOST-B", "cpu"]
 assert not any(h == "HOST-C" for h, _ in rep), "broken file should not be in report"
