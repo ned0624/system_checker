@@ -358,7 +358,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 
 | 欄位 | 誰用 | 說明 |
 |---|---|---|
-| `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 每週監控 CSV 資料夾 |
+| `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 每週監控 CSV 資料夾；`{week}` / `{yyyy}` / `{yy}` / `{ww}` 三者都支援（例: `.../System Check/{week}/Monitor`） |
 | `days` | Kettle | 撈最近幾天（SQL 的 `interval ${DAYS} day`） |
 | `report_dir` | monitor_check | 報表輸出資料夾 |
 | `x_over_minutes` | fill_check | 連續超過 spec 幾分鐘以上才在檢核表填 X（預設 5）；報表的 `OVER SPEC` 仍列出所有超標 |
@@ -416,8 +416,14 @@ Kettle 不寫死路徑，template、輸出資料夾、天數都從 `D:\SystemChe
    - **Table input**：勾 **Replace variables in script**，SQL 改兩處：
      ```sql
      -- 輸出資料夾：原本 concat('D:/SystemCheck/', date_format(now(), '%x-W%v'), '/') as dir
-     concat(replace(replace('${MONITOR_DIR}', '{yyyy}', date_format(now(), '%x')),
-                    '{ww}', date_format(now(), '%v')), '/') as dir
+     -- {week} / {yyyy} / {yy} / {ww} 都換成本週（%x = ISO 年、%v = ISO 週），順序不能對調
+     concat(
+       replace(replace(replace(replace('${MONITOR_DIR}',
+         '{week}', concat('W', right(date_format(now(), '%x'), 2), date_format(now(), '%v'))),
+         '{yyyy}', date_format(now(), '%x')),
+         '{yy}',   right(date_format(now(), '%x'), 2)),
+         '{ww}',   date_format(now(), '%v')),
+       '/') as dir
      -- 天數：原本 interval 7 day（monitor_time 與 lm_time 兩處）
      interval ${DAYS} day
      ```
