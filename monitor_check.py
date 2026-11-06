@@ -15,7 +15,8 @@ CSV 格式（檔名 = 主機名稱，例: D:/SystemCheck/2026-W45/P3-WFA-AP01V.c
 檢查項目（每台主機、每個指標）:
 1. 超過 spec：數值 > upper_spec 的筆數、首次/最後時間、最長連續分鐘數、最大值
 2. 持續上升沒降下來：每天（trend.bucket_minutes）取平均（從最後一筆往回切，最舊不完整的一天捨棄），
-   整段升幅 ≥ spec × min_rise_pct_of_spec%，且過程中從最高點回落 ≤ spec × max_drop_pct_of_spec%
+   整段升幅 ≥ spec × min_rise_pct_of_spec%，且過程中從最高點回落 ≤ spec × max_drop_pct_of_spec%，
+   而且最後沒有降下來：最後一分鐘的值比最後一天平均低超過升幅的 end_drop_pct_of_rise%（預設 50）就不算
    （沒有 spec 時以第一段平均為基準）；判定上升時估算照目前速度約幾小時後達 spec
 fill_check 也 import 本程式（analyze_folder / note_text），把結果填進檢核表的 CPU/Memory/... 欄與備註
 
@@ -36,6 +37,7 @@ fill_check 也 import 本程式（analyze_folder / note_text），把結果填�
     trend.min_buckets                至少幾段才判定上升（預設 3）
     trend.min_rise_pct_of_spec       升幅門檻，spec 的百分比（預設 5）
     trend.max_drop_pct_of_spec       回落容許值，spec 的百分比（預設 1）
+    trend.end_drop_pct_of_rise       最後一分鐘比最後一天平均低超過升幅的幾 % 算「已降下來」（預設 50）
 
 結束碼: 0 = 完成（不論有沒有發現問題），1 = 錯誤（設定檔、CSV 資料夾、報表或 log 寫入失敗）
 只用 Python 內建模組，打包成單一 exe（不需要 pandas）
@@ -54,7 +56,8 @@ TIME_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/
 REPORT_HEADER = ["host", "result", "metric", "spec", "max", "max_time", "over_count", "over_first", "over_last",
                  "longest_over_min", "rise", "rising", "hours_to_spec"]
 # 持續上升判定預設：每天平均（Kettle 撈 7 天），至少 3 天才判定；fill_check 也用這組
-DEFAULT_TREND = {"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1}
+DEFAULT_TREND = {"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1,
+                 "end_drop_pct_of_rise": 50}
 
 
 def _base_dir():
@@ -218,6 +221,12 @@ def check_trend(points, spec, cfg):
     if not base or base <= 0:
         return res
     rising = rise >= base * cfg["min_rise_pct_of_spec"] / 100 and drop <= base * cfg["max_drop_pct_of_spec"] / 100
+    # 最後有沒有降下來：最後一分鐘的值回落超過升幅的 end_drop_pct_of_rise%（預設一半）就不算持續上升
+    # 例: 第一天平均 3.6、最後一天平均 4.0（升幅 0.4），最後一分鐘 < 3.8 → 已降下來
+    res["last_value"] = points[-1][1]
+    if rising and points[-1][1] < avgs[-1] - rise * cfg.get("end_drop_pct_of_rise", 50) / 100:
+        rising = False
+        res["dropped_at_end"] = True
     res["rising"] = "Y" if rising else "N"
     hours = (keys[0] - keys[-1]) * bucket / 60
     if rising and spec and hours > 0 and avgs[-1] < spec:

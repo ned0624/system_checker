@@ -73,6 +73,18 @@ write("host-f.csv", "60.00,420.00", [(10.0, 300.0)] * 120, columns="time_min,cpu
 rows = [(30 + 25 * math.sin(2 * math.pi * (i + 517) / DAY - 1.2),) for i in range(N)]
 write("host-g.csv", "60.00", rows, columns="time_min,cpu", start=START + timedelta(minutes=517))
 
+# HOST-H: memory 每天上升，但最後一分鐘降回起點 → 已降下來，不算持續上升
+rows = [(15 + 0.0005 * i + 0.1 * math.sin(i / 7),) for i in range(N - 1)] + [(15.0,)]
+write("host-h.csv", "25.60", rows, columns="time_min,memory")
+
+# HOST-I: 像使用者附圖：前 6 天慢慢上升、最後一天前降回起點並維持 → 不算持續上升
+rows = [((3.6 + 0.45 * i / (6 * DAY) if i < 6 * DAY - 300 else 3.6) + 0.1 * math.sin(i / 3),) for i in range(N)]
+write("host-i.csv", "4.80", rows, columns="time_min,memory")
+
+# HOST-J: 同 HOST-H 但最後一分鐘只是小幅雜訊（沒有回落一半以上）→ 仍是持續上升
+rows = [(15 + 0.0005 * i + 0.1 * math.sin(i / 7),) for i in range(N - 1)] + [(15 + 0.0005 * N - 0.3,)]
+write("host-j.csv", "25.60", rows, columns="time_min,memory")
+
 # HOST-D: 只有 3 小時 → 不判定上升，超標照算
 rows = [(10.0, 30.0 if i == 10 else 20.0, 30.0, 300.0, 500.0) for i in range(180)]
 write("host-d.csv", "60.00,25.60,40.00,420.00,625.00", rows)
@@ -109,6 +121,9 @@ assert rep["HOST-E", "cpu"]["result"] == "NO DATA" and rep["HOST-E", "disk2"]["r
 assert sorted(m for h, m in rep if h == "HOST-F") == ["cpu", "disk2"]
 assert rep["HOST-F", "disk2"]["result"] == "OK" and rep["HOST-F", "disk2"]["spec"] == "420.00"
 assert rep["HOST-B", "memory"]["rising"] == "N", rep["HOST-B", "memory"]
+assert rep["HOST-H", "memory"]["rising"] == "N" and rep["HOST-H", "memory"]["result"] == "OK", rep["HOST-H", "memory"]
+assert rep["HOST-I", "memory"]["rising"] == "N", rep["HOST-I", "memory"]
+assert rep["HOST-J", "memory"]["rising"] == "Y", rep["HOST-J", "memory"]
 assert rep["HOST-G", "cpu"]["rising"] == "N" and rep["HOST-G", "cpu"]["result"] == "OK", rep["HOST-G", "cpu"]
 assert rep["HOST-B", "cpu"]["spec"] == "" and rep["HOST-B", "cpu"]["over_count"] == "0", rep["HOST-B", "cpu"]
 assert not any(h == "HOST-C" for h, _ in rep), "broken file should not be in report"
