@@ -6,11 +6,14 @@ twice (second run must keep manual edits) and checks the generated weekly file.
 Usage: python ci_template_test.py <empty temp folder>
 """
 import json
+import math
 import glob
 import os
 import shutil
 import subprocess
 import sys
+
+from datetime import datetime, timedelta
 
 import openpyxl
 from openpyxl.styles import PatternFill
@@ -20,11 +23,13 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 tmp = os.path.abspath(sys.argv[1])
 # mode: weekswap (no link_target) / rule (link_target, link_text null) / ruletext (link_target + link_text)
 #       locked (file open by someone) / weekdir (paths.csv_dir contains {week})
+#       monitor (Kettle monitor CSVs -> CPU/Memory/Disk 2 columns marked O in the template + notes)
 MODE = sys.argv[2] if len(sys.argv) > 2 else "weekswap"
 os.makedirs(tmp, exist_ok=True)
 app = os.path.join(tmp, "app")
 os.makedirs(app, exist_ok=True)
 shutil.copy("fill_check.py", app)
+shutil.copy("monitor_check.py", app)
 
 GRAY = PatternFill("solid", fgColor="FF808080")
 BLACK = PatternFill("solid", fgColor="FF000000")
@@ -37,7 +42,8 @@ SHARE = r"\\xintec.com.tw\tsm\Supporting_Org\Dept\System Check"
 wb = openpyxl.Workbook()
 ws = wb.active
 ws.title = "Server"
-ws.append(["Host Name", "Checker", "事件檢視器\n系統錯誤", "事件檢視器\n警告事件", "防毒軟體", "CPU", "連結", "備註"])
+ws.append(["Host Name", "Checker", "事件檢視器\n系統錯誤", "事件檢視器\n警告事件", "防毒軟體", "CPU", "連結", "備註"]
+          + (["Memory", "Disk 2"] if MODE == "monitor" else []))
 for host in ("SRV-A", "SRV-B", "SRV-C", "SRV-D"):
     ws.append([host, "Ned"])
 ws.append(["(季檢,下次 10/1, 2027/1/7)"])   # row 6: yellow merged separator
@@ -54,6 +60,10 @@ ws.merge_cells("A6:H6")
 ws["G2"] = "SRV-A_Evidence_W40"
 ws["G2"].hyperlink = Hyperlink(ref="G2", target=f"file:///{SHARE}\\W2640\\Reference\\BOS - SRV-A_Evidence_W40.docx")
 ws["G3"] = f'=HYPERLINK("{SHARE}\\W2640\\Reference\\BOS - SRV-B_Evidence_W40.docx","SRV-B_Evidence_W40")'
+if MODE == "monitor":
+    # 打 O = 要檢查的監控項目：SRV-A CPU/Memory/Disk 2、SRV-B CPU/Memory、SRV-D CPU；SRV-E 沒打 O
+    for ref in ("F2", "I2", "J2", "F3", "I3", "F5"):
+        ws[ref] = "O"
 tpl = os.path.join(tmp, "template.xlsx")
 wb.save(tpl)
 
@@ -97,6 +107,26 @@ LINK_ROOT = os.path.join(tmp, "share")
 if MODE in ("rule", "ruletext"):
     cfg["check_sheet"]["link_target"] = LINK_ROOT.replace("\\", "/") + "/{week}/Reference/BOS"
     cfg["check_sheet"]["link_text"] = "BOS - {host}_Evidence_W{ww}" if MODE == "ruletext" else None
+KETTLE = os.path.join(tmp, "kettle", "2026-W42")   # Kettle 週資料夾 %x-W%v
+if MODE == "monitor":
+    cfg["monitor"] = {"csv_dir": os.path.join(tmp, "kettle", "{yyyy}-W{ww}")}
+    os.makedirs(KETTLE)
+    start = datetime(2026, 10, 11, 9, 0)
+    DAY = 1440
+
+    def kettle_csv(host, header, spec, rows):
+        lines = [header, "upper_spec," + spec] + [
+            f"{start + timedelta(minutes=i):%Y-%m-%d %H:%M}," + ",".join("" if x is None else f"{x:.2f}" for x in r)
+            for i, r in enumerate(rows)]
+        open(os.path.join(KETTLE, host + ".csv"), "w", encoding="utf-8").write("\n".join(lines) + "\n")
+
+    # SRV-A: cpu 超標 30 分鐘 → X；memory 每天上升 → O + 備註；disk2 正常 → O
+    kettle_csv("SRV-A", "time_min,cpu,memory,disk2", "60.00,25.60,420.00",
+               [(75.0 if 3000 <= i < 3030 else 20 + 10 * math.sin(2 * math.pi * i / DAY), 15 + 0.0006 * i, 300.0)
+                for i in range(7 * DAY)])
+    # SRV-B: cpu 正常 → O；memory 打 O 但沒有數值 → 空白 + 備註
+    kettle_csv("SRV-B", "time_min,cpu,memory", "60.00,25.60", [(20.0, None)] * (7 * DAY))
+    # SRV-D: 沒有 CSV → CPU 空白 + 備註
 json.dump(cfg, open(os.path.join(app, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 
@@ -106,6 +136,7 @@ def run():
                        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
     print(r.stdout, r.stderr)
     assert r.returncode == 0, r.returncode
+    return r.stdout
 
 
 run()
@@ -121,7 +152,7 @@ v = lambda ref: ws[ref].value
 assert (v("C2"), v("D2")) == ("X", "O"), (v("C2"), v("D2"))
 assert "1801" in v("H2") and "10016" not in v("H2"), v("H2")
 # SRV-B (row 3): only last week's CSV -> treated as no CSV -> O O
-assert (v("C3"), v("D3"), v("H3")) == ("O", "O", None), (v("C3"), v("D3"), v("H3"))
+assert (v("C3"), v("D3")) == ("O", "O") and (MODE == "monitor" or v("H3") is None), (v("C3"), v("D3"), v("H3"))
 # SRV-C (row 4): gray cells untouched
 assert (v("C4"), v("D4"), v("E4")) == (None, None, None), (v("C4"), v("D4"), v("E4"))
 # SRV-D (row 5): theme-gray antivirus untouched, events O O
@@ -133,7 +164,7 @@ assert v("C7") is None and v("D7") == "O" and v("E7") == "O", (v("C7"), v("D7"),
 # antivirus O on normal rows
 assert [v(f"E{r}") for r in (2, 3)] == ["O", "O"]
 # links
-if MODE in ("weekswap", "locked", "weekdir"):
+if MODE in ("weekswap", "locked", "weekdir", "monitor"):
     assert v("G2") == "SRV-A_Evidence_W42", v("G2")
     assert "\\W2642\\" in ws["G2"].hyperlink.target and "_W42.docx" in ws["G2"].hyperlink.target, ws["G2"].hyperlink.target
     assert "\\W2642\\" in v("G3") and "SRV-B_Evidence_W42" in v("G3") and "W2640" not in v("G3"), v("G3")
@@ -149,6 +180,15 @@ else:
     else:
         assert v("G2") == "BOS - SRV-A_Evidence_W42" and v("G7") == "BOS - SRV-E_Evidence_W42", (v("G2"), v("G7"))
     assert ws["G4"].font.underline == "single", ws["G4"].font.underline
+if MODE == "monitor":
+    assert (v("F2"), v("I2"), v("J2")) == ("X", "O", "O"), (v("F2"), v("I2"), v("J2"))
+    assert "1801" in v("H2") and "[監控] CPU 超過 spec 60.00 共 30 分鐘" in v("H2"), v("H2")
+    assert "[監控] Memory 持續上升" in v("H2") and "Disk 2" not in v("H2"), v("H2")
+    assert (v("F3"), v("I3"), v("J3")) == ("O", None, None), (v("F3"), v("I3"), v("J3"))
+    assert v("H3") == "[監控] Memory 無監控資料", v("H3")
+    assert v("F5") is None and v("H5") == "[監控] CPU 無監控資料", (v("F5"), v("H5"))
+    assert v("F7") is None and v("I7") is None, (v("F7"), v("I7"))
+    first_notes = (v("H2"), v("H3"), v("H5"))
 # tracking sheet: only this week's CSV pasted
 trs = openpyxl.load_workbook(track)["事件檢視器_BOS"]
 pasted = [(r[0], r[1]) for r in trs.iter_rows(min_row=2, values_only=True) if r[0]]
@@ -156,11 +196,22 @@ assert pasted and all(p == ("SRV-A", "W2642") for p in pasted), pasted
 
 # second run keeps manual edits made in the weekly file
 wb = openpyxl.load_workbook(out)
-wb.active["F2"] = "manual 30%"
+MANUAL = "B2" if MODE == "monitor" else "F2"   # monitor 模式的 F2 是 CPU 結果
+wb.active[MANUAL] = "manual 30%"
 wb.save(out)
 run()
 ws = openpyxl.load_workbook(out).active
-assert ws["F2"].value == "manual 30%", ws["F2"].value
+assert ws[MANUAL].value == "manual 30%", ws[MANUAL].value
+if MODE == "monitor":   # 重跑：打 O 從範本讀，[監控] 備註不重複
+    assert (ws["F2"].value, ws["I3"].value, ws["F5"].value) == ("X", None, None)
+    assert (ws["H2"].value, ws["H3"].value, ws["H5"].value) == first_notes, (ws["H2"].value, first_notes)
+    # Kettle 資料夾不存在：WARN，監控欄維持範本的 O
+    os.remove(out)
+    shutil.rmtree(KETTLE)
+    o = run()
+    assert "Monitor CSV folder not found" in o, o
+    ws = openpyxl.load_workbook(out).active
+    assert (ws["F2"].value, ws["I2"].value, ws["F5"].value) == ("O", "O", "O"), (ws["F2"].value, ws["F5"].value)
 assert ws["C2"].value == "X"
 assert ws["G2"].value == ("BOS - SRV-A_Evidence_W42" if MODE == "ruletext" else "SRV-A_Evidence_W42"), ws["G2"].value
 print(f"TEMPLATE TEST OK ({MODE})")

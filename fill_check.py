@@ -57,6 +57,11 @@
     wait_if_open.retry_seconds / max_wait_minutes
                                               Excel 被別人開著時，每幾秒重試、最多等幾分鐘（0 = 不等）；
                                               超時未存檔以結束碼 3 結束，重跑是安全的
+    monitor.csv_dir                           Kettle 匯出的監控 CSV 資料夾（例: D:/SystemCheck/{yyyy}-W{ww}），沒設定就不填監控欄
+    monitor.columns                           檢核表監控欄標題 → CSV 欄位（CPU→cpu、Memory→memory、Disk 2→disk2…）
+    monitor.trend                             持續上升門檻，null = 用 monitor_check 的預設（每天平均）
+                                              只填範本中打 O 的格子：超過 spec → X，否則 O；打 O 但沒數據 → 空白；
+                                              超標、持續上升、沒數據寫進備註（[監控] 開頭，重跑時先移除再寫）
     log_dir                                   log 資料夾，省略 = logs，可用 {week}/{yy}/{ww}（依日期命名，例: 20261016.log；同一天多次執行附加在同一檔）
     路徑可用絕對路徑（例: D:/週檢/BOS_SystemCheck.xlsx 或 \\\\server\\share\\週檢\\csv），
     JSON 裡的反斜線要寫兩次（\\），或改用正斜線 /
@@ -155,6 +160,14 @@ TRACK_ID_HEADER  = next((h for h, c in TRACK_COLUMNS.items() if c == CSV_ID_COLU
 TRACK_OUTPUT = _path(_cfg["track"]["output"])
 
 LOG_DIR = _path(_cfg.get("log_dir") or "logs")
+
+# 監控數據（Kettle 匯出的每台主機 CSV）→ 檢核表 CPU/Memory/... 欄；沒有 monitor 設定就不做
+_mon = _cfg.get("monitor") or {}
+MONITOR_CSV_DIR = _path(_mon.get("csv_dir"))
+MONITOR_COLUMNS = _mon.get("columns") or {"CPU": "cpu", "Memory": "memory", "SWAP": "swap",
+                                          "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"}
+MONITOR_TREND   = _mon.get("trend")
+MONITOR_NOTE    = "[監控]"  # 備註中監控的行以此開頭，重跑時先移除再寫
 
 # Excel 被別人開著（鎖住）時：每 retry_seconds 秒重試，最多等 max_wait_minutes 分鐘（0 = 不等）
 _wait = _cfg.get("wait_if_open") or {}
@@ -280,8 +293,10 @@ def update_week_tokens(text, week):
 
 
 def week_path(path, week):
-    """路徑中的 {week}/{yy}/{ww} 換成週別，例: W2642 / 26 / 42"""
-    return path.replace("{week}", week).replace("{yy}", week[1:3]).replace("{ww}", week[3:5])
+    """路徑中的 {week}/{yyyy}/{yy}/{ww} 換成週別，例: W2642 / 2026 / 26 / 42
+    Kettle 的週資料夾 %x-W%v（2026-W42）= {yyyy}-W{ww}"""
+    return (path.replace("{week}", week).replace("{yyyy}", "20" + week[1:3])
+            .replace("{yy}", week[1:3]).replace("{ww}", week[3:5]))
 
 
 def find_host_rows(ws):
@@ -384,6 +399,80 @@ def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week):
                 if cell.hyperlink.display:
                     cell.hyperlink.display = update_week_tokens(cell.hyperlink.display, week)
     return no_csv
+
+
+# ---------- 監控數據 ----------
+
+def monitor_marks(path):
+    """template（或檢核表）中監控欄有打 O/X 的格子 → {伺服器(大寫): [欄位標題]}；
+    範本模式一律讀範本：重跑時當週檔的 O 已換成結果，沒數據的格子也被清空"""
+    wb = openpyxl.load_workbook(path)
+    ws = wb[CHECK_SHEET] if CHECK_SHEET else wb.worksheets[0]
+    cols = monitor_columns(ws)
+    marks = {}
+    for host, r in find_host_rows(ws).items():
+        heads = [h for h, c in cols.items() if str(ws.cell(row=r, column=c).value or "").strip().upper() in ("O", "X")]
+        if heads:
+            marks[host] = heads
+    return marks
+
+
+def monitor_columns(ws):
+    """監控欄標題 → 欄號（檢核表沒有的標題略過）"""
+    headers = {str(c.value).strip(): c.column for c in ws[HEADER_ROW] if c.value is not None}
+    return {h: headers[h] for h in MONITOR_COLUMNS if h in headers}
+
+
+def plan_monitor(week, marks, problems):
+    """分析本週監控 CSV → {伺服器: ({欄位標題: "O"/"X"/None}, [備註])}；資料夾不存在回傳 None（不填）"""
+    import monitor_check as mc
+    csv_dir = week_path(MONITOR_CSV_DIR, week)
+    if not os.path.isdir(csv_dir):
+        print(f"[WARN] Monitor CSV folder not found: {csv_dir} - monitor columns not filled")
+        problems.append(("monitor", f"WARN: monitor CSV folder not found ({csv_dir}), monitor columns not filled"))
+        return None
+    hosts = mc.analyze_folder(csv_dir, mc.trend_config(MONITOR_TREND))
+    print(f"\nMonitor CSV folder: {csv_dir} ({len(hosts)} files)")
+    for host, h in hosts.items():
+        if h.get("error"):
+            print(f"  [WARN] {host}: {h['error']}")
+            problems.append((f"monitor {host}", f"WARN: {h['error']}"))
+    plan = {}
+    for host, heads in sorted(marks.items()):
+        res = {r["metric"]: r for r in hosts.get(host, {}).get("rows", [])}
+        values, notes = {}, []
+        for head in heads:
+            r = res.get(MONITOR_COLUMNS[head])
+            if r is None or r["result"] == "NO DATA":
+                values[head] = None  # 有打 O 但沒有數據：留空白，備註提醒
+                notes.append(f"{MONITOR_NOTE} {head} 無監控資料")
+                continue
+            values[head] = "X" if r["over_count"] else "O"  # 只有超標填 X；持續上升只寫備註
+            note = mc.note_text(r, head)
+            if note:
+                notes.append(note)
+        plan[host] = (values, notes)
+        print(f"  {host}: " + " ".join(f"{h}={v or '-'}" for h, v in values.items()))
+        for n in notes:
+            print(f"    {n}")
+    return plan
+
+
+def write_monitor(ws, host_rows, plan, note_col):
+    """把 plan_monitor 的結果寫進檢核表；備註先移除舊的 [監控] 行再附加"""
+    cols = monitor_columns(ws)
+    for host, (values, notes) in plan.items():
+        r = host_rows.get(host)
+        if r is None:
+            continue
+        for head, v in values.items():
+            if head in cols:
+                set_cell(ws, r, cols[head], v)
+        cell = ws.cell(row=r, column=note_col)
+        old = [ln for ln in str(cell.value or "").split("\n") if ln.strip() and not ln.startswith(MONITOR_NOTE)]
+        text = "\n".join(old + notes)
+        if set_cell(ws, r, note_col, text or None) and text:
+            cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
 
 
 # ---------- 問題追蹤表 ----------
@@ -674,6 +763,15 @@ def main():
             problems.append((fname, f"ERROR: O/X not filled ({e})"))
         results.append(dict(host=host, week=week_label(d), fname=fname, df=df, check=check))
 
+    # ---- 1b. 監控數據：依範本打 O 的格子算出 O/X 與備註 ----
+    monitor = None
+    if MONITOR_CSV_DIR:
+        marks = monitor_marks(week_path(TEMPLATE_XLSX, week) if template_mode else check_src)
+        if marks:
+            monitor = plan_monitor(week, marks, problems)
+        else:
+            print(f"\n[WARN] No monitor column ({', '.join(MONITOR_COLUMNS)}) marked O in the check sheet")
+
     # ---- 2. 檢核表：等沒人開著 → 讀最新檔 → 套用 → 立刻存檔 ----
     def build_check():
         src = check_output if template_mode and os.path.isfile(check_output) else check_src
@@ -696,6 +794,8 @@ def main():
             print(f"Check sheet: antivirus = O, links updated to {week}")
             if no_csv:
                 print(f"Servers without a {week} CSV, event columns set to O O: {', '.join(no_csv)}")
+        if monitor is not None:
+            write_monitor(ws, host_rows, monitor, cols[NOTE_HEADER])
         return wb
 
     check_ok = write_when_free("Check sheet", check_output, build_check)

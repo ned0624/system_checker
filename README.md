@@ -299,10 +299,12 @@ ID> 200,1801
 ## 監控數據分析 monitor_check
 
 分工：**Kettle 只負責撈資料，檢核由 monitor_check（Python）做**。超標用 SQL 也做得到，
-但「每小時平均、從最高點回落」的趨勢判定在 SQL/Kettle 很難寫、難測、難調門檻。
+但「每天平均、從最高點回落」的趨勢判定在 SQL/Kettle 很難寫、難測、難調門檻。
+結果會由 fill_check 填進檢核表（見下方「填進檢核表」），monitor_check.exe 另外產生明細報表。
 
-分析 Kettle（`monitor.ktr`）每天匯出的每台主機 CSV（`D:\SystemCheck\2026-W45\<主機>.csv`，最近 1 天、每分鐘一筆，
-只有 template 打 O 的欄位）：
+分析 Kettle（`monitor.ktr`）每週匯出的每台主機 CSV（`D:\SystemCheck\2026-W45\<主機>.csv`，**最近 7 天**、每分鐘一筆，
+只有 template 打 O 的欄位）。Kettle SQL 兩處 `now() - interval 1 day`（monitor_time 與 lm_time）要改成 `interval 7 day`，
+排程改成每週一次、在 run_weekly.bat（fill_check）之前：
 
 ```
 time_min,cpu,memory,swap,disk1,disk2,disk3
@@ -321,7 +323,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | 項目 | 判定 |
 |---|---|
 | 超過 spec | 數值 > `upper_spec`；記錄超標分鐘數、首次/最後時間、最長連續分鐘數、最大值與時間。spec 空白則不檢查 |
-| 持續上升沒降下來 | 每小時取平均，整天升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%。CPU 這種上下跳動的不會誤判；判定上升時估算照目前速度約幾小時後達 spec。不足 6 小時的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一小時平均為基準 |
+| 持續上升沒降下來 | 每天取平均（從最後一筆往回每 24 小時一段，最舊不完整的一天捨棄），一週升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%。日夜起伏、上下跳動的不會誤判；判定上升時估算照目前速度約幾小時（天）後達 spec。不足 3 天的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一天平均為基準 |
 
 門檻在 `monitor_check.json` 的 `trend` 調整：
 
@@ -330,7 +332,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
   "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
   "report_dir": "D:/SystemCheck/monitor_report",
   "log_dir": "D:/SystemCheck/logs",
-  "trend": { "bucket_minutes": 60, "min_buckets": 6, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1 }
+  "trend": { "bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1 }
 }
 ```
 
@@ -340,7 +342,17 @@ Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對�
 ### 輸出
 
 - 報表 `report_dir\yyyyMMdd_monitor_report.csv`（Excel 可直接開），一台主機一個指標一列：
-  `host, metric, spec, max, max_time, over_count, over_first, over_last, longest_over_min, first_hour_avg, last_hour_avg, rise, max_drop, rising, hours_to_spec, result`
+  `host, metric, spec, max, max_time, over_count, over_first, over_last, longest_over_min, rise, rising, hours_to_spec, result`
+
+  | 欄位 | 意思 |
+  |---|---|
+  | spec | upper_spec |
+  | max / max_time | 一週最大值與時間 |
+  | over_count / over_first / over_last | 超過 spec 的分鐘數、第一次與最後一次時間 |
+  | longest_over_min | 最長連續超標分鐘數 |
+  | rise | 升幅（最後一天平均 − 第一天平均） |
+  | rising | Y = 持續上升、N = 沒有、`-` = 資料不足 |
+  | hours_to_spec | 持續上升時，照目前速度約幾小時到 spec |
   - `result`：`OK` / `OVER SPEC` / `RISING` / `OVER SPEC+RISING` / `NO DATA`
 - 畫面與 log `log_dir\yyyyMMdd_monitor_check.log`：每台一行摘要，最後列出所有超標與持續上升的項目
 - 結束碼：0 = 完成（不論有沒有發現問題），1 = 錯誤（設定檔、CSV 資料夾、報表或 log 寫不進去）
@@ -360,6 +372,33 @@ call pan.bat /file:monitor.ktr
 D:\SystemCheck\monitor_check.exe
 ```
 
+### 填進檢核表（fill_check）
+
+`config.json` 有 `monitor` 段時，fill_check 會分析本週（或 `--week` 指定週）的 Kettle 資料夾，
+填進檢核表的 CPU / Memory / SWAP / Disk 1 / Disk 2 / Disk 3 欄：
+
+```json
+"monitor": {
+    "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
+    "columns": {"CPU": "cpu", "Memory": "memory", "SWAP": "swap", "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"},
+    "trend": null
+}
+```
+
+| 狀況 | 格子 | 備註 |
+|---|---|---|
+| 範本**沒打 O** | 不動 | — |
+| 有打 O、超過 spec | X | `[監控] CPU 超過 spec 60.00 共 30 分鐘，最長連續 30 分鐘，最高 75.00（10/13 11:00）` |
+| 有打 O、持續上升（沒超標） | O | `[監控] Memory 持續上升 15.43 → 20.62，約 5.8 天達 spec` |
+| 有打 O、正常 | O | — |
+| 有打 O、沒有 CSV 或該欄沒數值 | 空白 | `[監控] Memory 無監控資料` |
+
+- 哪些格子有打 O **一律從範本讀**（重跑時當週檔的 O 已換成結果），有底色的格子不寫
+- 備註和事件檢視器的內容並存；`[監控]` 開頭的行重跑時會先移除再寫，不會重複
+- Kettle 資料夾不存在：顯示 `[WARN] Monitor CSV folder not found`，監控欄維持範本原樣
+- `columns` 的左邊是檢核表的欄位標題（要和第 `header_row` 列的文字一樣），右邊是 Kettle CSV 的欄位
+- `trend` 為 null 時用 monitor_check 的預設（每天平均、5% / 1%）
+
 ### 只有時間沒有數據
 
 Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「沒打 O」的監控項目（例如 Traffic In/Out、
@@ -370,7 +409,7 @@ Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「
    ```sql
    select hostname, monitor_item, count(*) n, min(monitor_time), max(monitor_time)
    from STM.monitor_system_history
-   where hostname in ('P3-APX-AP02V', 'T1-GUI-AP01P') and monitor_time > now() - interval 1 day
+   where hostname in ('P3-APX-AP02V', 'T1-GUI-AP01P') and monitor_time > now() - interval 7 day
    group by hostname, monitor_item order by hostname, monitor_item;
    ```
 2. CTE `d` 只留「有打 O 且對得到」的項目，三段 union 都跟著正確，對不到的主機也不會產生檔案：
@@ -382,8 +421,8 @@ Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「
               t.monitor_data, t.upper_spec,
               p.c_cpu, p.c_mem, p.c_swap, p.c_d1, p.c_d2, p.c_d3
        from STM.monitor_system_history t join p on t.hostname = p.h
-       where t.monitor_time > now() - interval 1 day
-         and t.lm_time > now() - interval 1 day
+       where t.monitor_time > now() - interval 7 day
+         and t.lm_time > now() - interval 7 day
      ) x
      where (item = 'cpu' and c_cpu) or (item = 'mem' and c_mem) or (item = 'swap' and c_swap)
         or (item = 'd1' and c_d1) or (item = 'd2' and c_d2) or (item = 'd3' and c_d3)

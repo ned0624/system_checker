@@ -3,8 +3,8 @@
   "report_dir": "D:/SystemCheck/monitor_report",
   "log_dir": "D:/SystemCheck/logs",
   "trend": {
-    "bucket_minutes": 60,
-    "min_buckets": 6,
+    "bucket_minutes": 1440,
+    "min_buckets": 3,
     "min_rise_pct_of_spec": 5,
     "max_drop_pct_of_spec": 1
   }

@@ -40,6 +40,18 @@
         "ignore_header": "可忽略",
         "output": null
     },
+    "monitor": {
+        "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
+        "columns": {
+            "CPU": "cpu",
+            "Memory": "memory",
+            "SWAP": "swap",
+            "Disk 1": "disk1",
+            "Disk 2": "disk2",
+            "Disk 3": "disk3"
+        },
+        "trend": null
+    },
     "log_dir": "D:/SystemCheck/logs",
     "wait_if_open": {
         "retry_seconds": 300,

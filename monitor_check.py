@@ -2,7 +2,7 @@
 """
 監控數據分析：檢查 Kettle（monitor.ktr）匯出的每台主機 CSV
 
-CSV 格式（檔名 = 主機名稱，例: D:/export/p3-wfa-ap01v.csv）:
+CSV 格式（檔名 = 主機名稱，例: D:/SystemCheck/2026-W45/P3-WFA-AP01V.csv；Kettle 撈最近 7 天）:
     time_min,cpu,memory,swap,disk1,disk2,disk3      （只有 template 打 O 的欄位）
     upper_spec,60.00,25.60,,40.00,420.00,625.00
     2026-11-03 16:42,4.62,22.10,,29.95,377.02,600.60
@@ -14,9 +14,10 @@ CSV 格式（檔名 = 主機名稱，例: D:/export/p3-wfa-ap01v.csv）:
 
 檢查項目（每台主機、每個指標）:
 1. 超過 spec：數值 > upper_spec 的筆數、首次/最後時間、最長連續分鐘數、最大值
-2. 持續上升沒降下來：每 trend.bucket_minutes 分鐘取平均，
+2. 持續上升沒降下來：每天（trend.bucket_minutes）取平均（從最後一筆往回切，最舊不完整的一天捨棄），
    整段升幅 ≥ spec × min_rise_pct_of_spec%，且過程中從最高點回落 ≤ spec × max_drop_pct_of_spec%
    （沒有 spec 時以第一段平均為基準）；判定上升時估算照目前速度約幾小時後達 spec
+fill_check 也 import 本程式（analyze_folder / note_text），把結果填進檢核表的 CPU/Memory/... 欄與備註
 
 輸出:
     report_dir/yyyyMMdd_monitor_report.csv   一台主機一個指標一列（UTF-8 BOM，Excel 可直接開）
@@ -29,8 +30,8 @@ CSV 格式（檔名 = 主機名稱，例: D:/export/p3-wfa-ap01v.csv）:
     csv_dir / report_dir / log_dir   路徑可用 {week}/{yyyy}/{yy}/{ww}（今天的 ISO 週，例: W2645 / 2026 / 26 / 45）
                                      Kettle 週資料夾 D:/SystemCheck/2026-W45 → D:/SystemCheck/{yyyy}-W{ww}
                                      相對路徑以設定檔所在資料夾為基準
-    trend.bucket_minutes             幾分鐘取一次平均（預設 60）
-    trend.min_buckets                至少幾段才判定上升（預設 6）
+    trend.bucket_minutes             幾分鐘取一次平均（預設 1440 = 每天）
+    trend.min_buckets                至少幾段才判定上升（預設 3）
     trend.min_rise_pct_of_spec       升幅門檻，spec 的百分比（預設 5）
     trend.max_drop_pct_of_spec       回落容許值，spec 的百分比（預設 1）
 
@@ -49,8 +50,9 @@ DEFAULT_COLUMNS = ["time_min", "cpu", "memory", "swap", "disk1", "disk2", "disk3
 SPEC_ROW = "upper_spec"
 TIME_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d %H:%M:%S")
 REPORT_HEADER = ["host", "metric", "spec", "max", "max_time", "over_count", "over_first", "over_last",
-                 "longest_over_min", "first_hour_avg", "last_hour_avg", "rise", "max_drop", "rising",
-                 "hours_to_spec", "result"]
+                 "longest_over_min", "rise", "rising", "hours_to_spec", "result"]
+# 持續上升判定預設：每天平均（Kettle 撈 7 天），至少 3 天才判定；fill_check 也用這組
+DEFAULT_TREND = {"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1}
 
 
 def _base_dir():
@@ -166,18 +168,22 @@ def check_over(points, spec):
 
 
 def check_trend(points, spec, cfg):
-    """每段平均 → 升幅、最大回落、是否持續上升、約幾小時後達 spec"""
+    """每段平均 → 升幅、最大回落、是否持續上升、約幾小時後達 spec
+    從最後一筆往回每 bucket_minutes 切一段，每段都是完整的一天（或一小時），
+    最舊那段不完整（筆數不到最大段一半）就捨棄，避免半天的日夜起伏造成誤判"""
     bucket = cfg["bucket_minutes"]
-    start = points[0][0]
+    end = points[-1][0]
     sums = {}
     for t, v in points:
-        k = int((t - start).total_seconds() // 60 // bucket)
+        k = int((end - t).total_seconds() // 60 // bucket)  # 0 = 最新一段
         s = sums.setdefault(k, [0.0, 0])
         s[0] += v
         s[1] += 1
-    keys = sorted(sums)
+    keys = sorted(sums, reverse=True)  # 舊 → 新
+    if len(keys) > 1 and sums[keys[0]][1] < max(c for _, c in sums.values()) / 2:
+        keys = keys[1:]
     avgs = [sums[k][0] / sums[k][1] for k in keys]
-    res = {"first_hour_avg": avgs[0], "last_hour_avg": avgs[-1], "rise": None, "max_drop": None,
+    res = {"first_avg": avgs[0], "last_avg": avgs[-1], "rise": None, "max_drop": None,
            "rising": "-", "hours_to_spec": None}
     if len(avgs) < cfg["min_buckets"]:
         return res
@@ -192,7 +198,7 @@ def check_trend(points, spec, cfg):
         return res
     rising = rise >= base * cfg["min_rise_pct_of_spec"] / 100 and drop <= base * cfg["max_drop_pct_of_spec"] / 100
     res["rising"] = "Y" if rising else "N"
-    hours = (keys[-1] - keys[0]) * bucket / 60
+    hours = (keys[0] - keys[-1]) * bucket / 60
     if rising and spec and hours > 0 and avgs[-1] < spec:
         res["hours_to_spec"] = (spec - avgs[-1]) / (rise / hours)
     return res
@@ -235,42 +241,81 @@ def describe(r):
         parts.append(f"over spec {fmt(r['spec'])}: {r['over_count']} min, longest {r['longest_over_min']} min, "
                      f"max {fmt(r['max'])} at {fmt(r['max_time'])}")
     if r.get("rising") == "Y":
-        s = f"rising {fmt(r['first_hour_avg'])} -> {fmt(r['last_hour_avg'])}"
+        s = f"rising {fmt(r['first_avg'])} -> {fmt(r['last_avg'])}"
         if r.get("hours_to_spec") is not None:
             s += f", reaches spec in ~{r['hours_to_spec']:.1f} h"
         parts.append(s)
     return f"{r['metric']} {'; '.join(parts)}"
 
 
-def main(cfg, week, csv_dir):
-    trend = {"bucket_minutes": 60, "min_buckets": 6, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1}
-    trend.update(cfg.get("trend") or {})
-    if not os.path.isdir(csv_dir):
-        print(f"[ERROR] CSV folder not found: {csv_dir} (check csv_dir in monitor_check.json)")
-        return 1
-    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
-    print(f"CSV folder : {csv_dir} ({len(files)} files)")
-    rows, findings, warns = [], [], []
-    for p in files:
+NO_VALUES = "no values in any column (check monitor_item mapping in Kettle SQL)"
+
+
+def trend_config(cfg_trend):
+    trend = dict(DEFAULT_TREND)
+    trend.update(cfg_trend or {})
+    return trend
+
+
+def analyze_folder(csv_dir, trend):
+    """資料夾內每台主機 → {HOST: dict(rows=每個指標的結果, n, first, last, skipped) 或 dict(error=說明)}
+    只有時間沒有數值的主機 rows 全是 NO DATA，另外帶 error=NO_VALUES"""
+    hosts = {}
+    for p in sorted(glob.glob(os.path.join(csv_dir, "*.csv"))):
         host = os.path.splitext(os.path.basename(p))[0].upper()
         try:
             metrics, spec, data, skipped = load_host(p)
         except Exception as e:
-            print(f"  [WARN] {host}: cannot read {p}: {e}")
-            warns.append((host, "file not read, see above"))
+            hosts[host] = {"error": f"cannot read {p}: {e}", "rows": []}
             continue
         res = analyze(host, metrics, spec, data, trend)
-        rows += res
+        hosts[host] = {"rows": res, "n": len(data), "first": data[0][0], "last": data[-1][0], "skipped": skipped}
         if all(r["result"] == "NO DATA" for r in res):
-            # 只有時間沒有數值：通常是 Kettle SQL 的 monitor_item 對不到
-            msg = "no values in any column (check monitor_item mapping in Kettle SQL)"
-            print(f"  [WARN] {host}: {len(data)} rows, {msg}")
-            warns.append((host, msg))
+            hosts[host]["error"] = NO_VALUES  # 通常是 Kettle SQL 的 monitor_item 對不到
+    return hosts
+
+
+def note_text(r, label=None):
+    """檢核表備註（中文），沒有要提醒的回傳 None；label = 檢核表欄位標題（例: Disk 2）"""
+    label = label or r["metric"]
+    if r["result"] == "NO DATA":
+        return f"[監控] {label} 無監控資料"
+    parts = []
+    if r.get("over_count"):
+        parts.append(f"超過 spec {fmt(r['spec'])} 共 {r['over_count']} 分鐘，最長連續 {r['longest_over_min']} 分鐘，"
+                     f"最高 {fmt(r['max'])}（{r['max_time']:%m/%d %H:%M}）")
+    if r.get("rising") == "Y":
+        s = f"持續上升 {fmt(r['first_avg'])} → {fmt(r['last_avg'])}"
+        h = r.get("hours_to_spec")
+        if h is not None:
+            s += f"，約 {h / 24:.1f} 天達 spec" if h >= 48 else f"，約 {h:.1f} 小時達 spec"
+        parts.append(s)
+    return f"[監控] {label} " + "；".join(parts) if parts else None
+
+
+def main(cfg, week, csv_dir):
+    trend = trend_config(cfg.get("trend"))
+    if not os.path.isdir(csv_dir):
+        print(f"[ERROR] CSV folder not found: {csv_dir} (check csv_dir in monitor_check.json)")
+        return 1
+    hosts = analyze_folder(csv_dir, trend)
+    files = len(hosts)
+    print(f"CSV folder : {csv_dir} ({files} files)")
+    rows, findings, warns = [], [], []
+    for host, h in hosts.items():
+        rows += h["rows"]
+        if "n" not in h:
+            print(f"  [WARN] {host}: {h['error']}")
+            warns.append((host, "file not read, see above"))
             continue
-        bad = [r for r in res if r["result"] not in ("OK", "NO DATA")]
+        if h.get("error"):
+            print(f"  [WARN] {host}: {h['n']} rows, {h['error']}")
+            warns.append((host, h["error"]))
+            continue
+        bad = [r for r in h["rows"] if r["result"] not in ("OK", "NO DATA")]
         findings += bad
-        note = f", skipped {skipped} rows with bad time" if skipped else ""
-        print(f"  {host}: {len(data)} rows {fmt(data[0][0])} ~ {fmt(data[-1][0])}{note}, "
+        note = f", skipped {h['skipped']} rows with bad time" if h["skipped"] else ""
+        print(f"  {host}: {h['n']} rows {fmt(h['first'])} ~ {fmt(h['last'])}{note}, "
               + (", ".join(f"{r['metric']} {r['result']}" for r in bad) if bad else "OK"))
 
     report_dir = resolve(cfg.get("report_dir") or "monitor_report", week)
@@ -286,7 +331,7 @@ def main(cfg, week, csv_dir):
         print(f"[ERROR] Cannot write report {report}: {e}")
         return 1
 
-    print(f"\n===== Done: {len(files)} files, {len(findings)} findings, {len(warns)} warnings =====")
+    print(f"\n===== Done: {files} files, {len(findings)} findings, {len(warns)} warnings =====")
     for r in findings:
         print(f"  [{r['result']}] {r['host']} {describe(r)}")
     for h, msg in warns:
