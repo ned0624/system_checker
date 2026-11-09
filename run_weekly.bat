@@ -35,7 +35,7 @@ REM Exit code 1 = error (folder not writable, or every server failed)
 if errorlevel 1 (
     echo.
     echo [ERROR] Event log collection failed. Stopped before Kettle and filling the Excel files.
-    echo         See the messages above and the log folder (log_dir in config.json)
+    echo         See the messages above and the log folder - log_dir in config.json
     goto END
 )
 
