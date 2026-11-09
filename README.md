@@ -85,7 +85,7 @@ D:\SystemCheck\
     "end_time": ""
 }
 ```
-- 路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww}`（撈取區間結束日的 ISO 週）、中文與 `\\server\share`（JSON 裡寫 `//server/share/...`）；相對路徑以 config.json 所在資料夾為基準
+- 路徑可用 `{week}` / `{yy}` / `{ww}`（撈取區間結束日的 ISO 週；`{yyyy}` 只有 EventLogCheck.ps1 支援）、中文與 `\\server\share`（JSON 裡寫 `//server/share/...`）；相對路徑以 config.json 所在資料夾為基準
 - 畫面會先印出 `Config:` 與實際傳入的參數
 - config.json 沒有的設定不傳，ps1 改用自己的 SETTINGS 區塊
 
