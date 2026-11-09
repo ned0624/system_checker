@@ -40,7 +40,7 @@ D:\SystemCheck\
 ├─ monitor_check.exe       監控數據分析報表（Kettle 匯出的 CSV）
 ├─ search_ignore.py / .exe 可忽略事件ID 搜尋
 ├─ config.json             共用設定檔（Kettle、monitor_check、fill_check）
-├─ 2026-W45\               Kettle 每週匯出的監控 CSV（主機名.csv）
+├─ monitor\                Kettle 匯出的監控 CSV（主機名.csv，每次覆蓋）
 ├─ EventLog\               CSV 輸出（每週累積）
 └─ logs\                   執行紀錄（日期.log；本機版為 日期_電腦名稱.log）
 ```
@@ -109,7 +109,7 @@ CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤
 | 步驟 | 內容 | 失敗時 |
 |---|---|---|
 | [1/4] 撈 event log | `COLLECTOR` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時把 `set COLLECTOR=` 改成 `EventLogCheck_Local.ps1`） | 結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
-| [2/4] Kettle | `call %KITCHEN% /file:%KETTLE_JOB%`（Job 讀 config.json，見「Kettle 讀 config.json」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
+| [2/4] Kettle | `call %KITCHEN% /file:%KETTLE_JOB%`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
 | [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → **繼續填表但監控欄清空** |
 | [4/4] fill_check | 有 `fill_check\fill_check.exe` 就執行 exe，沒有就用 Python；[2]、[3] 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
 
@@ -320,7 +320,7 @@ ID> 200,1801
 但「每天平均、從最高點回落」的趨勢判定在 SQL/Kettle 很難寫、難測、難調門檻。
 結果會由 fill_check 填進檢核表（見下方「填進檢核表」），monitor_check.exe 另外產生明細報表。
 
-分析 Kettle（`monitor.ktr`）每週匯出的每台主機 CSV（`D:\SystemCheck\2026-W45\<主機>.csv`，**最近 7 天**、每分鐘一筆，
+分析 Kettle（`monitor.ktr`）每週匯出的每台主機 CSV（固定資料夾 `D:\SystemCheck\monitor\<主機>.csv`，每次覆蓋，**最近 7 天**、每分鐘一筆，
 只有 template 打 O 的欄位）。天數由 config.json 的 `monitor.days` 控制（SQL 用 `interval ${DAYS} day`）。
 Kettle 與 monitor_check 已包含在 `run_weekly.bat` 的 [2/4]、[3/4]，不用另外排程：
 
@@ -347,7 +347,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 
 ```json
 "monitor": {
-    "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
+    "csv_dir": "D:/SystemCheck/monitor",
     "days": 7,
     "report_dir": "D:/SystemCheck/monitor_report",
     "x_over_minutes": 5,
@@ -358,7 +358,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 
 | 欄位 | 誰用 | 說明 |
 |---|---|---|
-| `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 每週監控 CSV 資料夾；`{week}` / `{yyyy}` / `{yy}` / `{ww}` 三者都支援（例: `.../System Check/{week}/Monitor`） |
+| `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 監控 CSV 的**固定資料夾**（例: `D:/SystemCheck/monitor`），Kettle 每次先清空再覆蓋 |
 | `days` | Kettle | 撈最近幾天（SQL 的 `interval ${DAYS} day`） |
 | `report_dir` | monitor_check | 報表輸出資料夾 |
 | `x_over_minutes` | fill_check | 連續超過 spec 幾分鐘以上才在檢核表填 X（預設 5）；報表的 `OVER SPEC` 仍列出所有超標 |
@@ -366,7 +366,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | `trend` | monitor_check、fill_check | 持續上升門檻，null = 預設 `{"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1, "edge_minutes": 60}` |
 
 log 寫到頂層的 `log_dir`。路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww}`（今天的 ISO 週，例: W2645 / 2026 / 26 / 45），
-Kettle 的週資料夾 `%x-W%v`（2026-W45）就寫成 `{yyyy}-W{ww}`；相對路徑以 config.json 所在資料夾為基準。
+相對路徑以 config.json 所在資料夾為基準。
 舊版的 `monitor_check.json` 仍可讀（會顯示 `[WARN] ... deprecated`），請把內容併進 `monitor` 段後刪除。
 
 ### 輸出
@@ -397,40 +397,207 @@ monitor_check.exe D:\SystemCheck\2026-W44    （臨時指定 CSV 資料夾，例
 `monitor_check.exe` 是單一檔案、只用 Python 內建模組（不含 pandas），放在 `D:\SystemCheck\`（和 config.json 同一層）。
 `run_weekly.bat` 會在 Kettle 之後自動執行它；要單獨重看報表時直接雙擊或用上面的指令。
 
-### Kettle 讀 config.json
+### Kettle 完整作法
 
-Kettle 不寫死路徑，template、輸出資料夾、天數都從 `D:\SystemCheck\config.json` 讀（和 fill_check 同一份 template）：
+Kettle 只負責撈資料：依 template 打 O 的主機與項目，撈最近 `monitor.days` 天的每分鐘數據，
+一台主機一個 CSV 輸出到**固定資料夾** `monitor.csv_dir`（例 `D:\SystemCheck\monitor\<主機>.csv`），**每次覆蓋**。
+template 路徑、輸出資料夾、天數都從 `D:\SystemCheck\config.json` 讀（和 fill_check 同一份 template）。
 
-1. 新增 Transformation「read_config.ktr」：
-   - **JSON input**：File 頁加入 `D:\SystemCheck\config.json`（Encoding UTF-8）；Fields 頁：
+#### 檔案
 
-     | Name | Path | Type |
-     |---|---|---|
-     | TEMPLATE | `$.check_sheet.template` | String |
-     | MONITOR_DIR | `$.monitor.csv_dir` | String |
-     | DAYS | `$.monitor.days` | Integer |
+```
+D:\SystemCheck\config.json            共用設定
+D:\SystemCheck\kettle\read_config.ktr 讀 config.json → 設變數
+D:\SystemCheck\kettle\monitor.ktr     讀 template → 逐台撈 MySQL → 輸出 CSV
+D:\SystemCheck\kettle\monitor.kjb     Job：依序執行（run_weekly.bat 的 KETTLE_JOB）
+D:\SystemCheck\monitor\<主機>.csv     輸出（monitor.csv_dir）
+```
 
-   - **Set Variables**：三個欄位設成同名變數，Scope = **Valid in the root job**
-2. 原本的 monitor.ktr：
-   - **Microsoft Excel input**：File 改成 `${TEMPLATE}`（工作表照原本設定）
-   - **Table input**：勾 **Replace variables in script**，SQL 改兩處：
-     ```sql
-     -- 輸出資料夾：原本 concat('D:/SystemCheck/', date_format(now(), '%x-W%v'), '/') as dir
-     -- {week} / {yyyy} / {yy} / {ww} 都換成本週（%x = ISO 年、%v = ISO 週），順序不能對調
-     concat(
-       replace(replace(replace(replace('${MONITOR_DIR}',
-         '{week}', concat('W', right(date_format(now(), '%x'), 2), date_format(now(), '%v'))),
-         '{yyyy}', date_format(now(), '%x')),
-         '{yy}',   right(date_format(now(), '%x'), 2)),
-         '{ww}',   date_format(now(), '%v')),
-       '/') as dir
-     -- 天數：原本 interval 7 day（monitor_time 與 lm_time 兩處）
-     interval ${DAYS} day
-     ```
-3. 新增 Job「monitor.kjb」：Start → Transformation（read_config.ktr）→ Transformation（monitor.ktr）
-4. Job 存成 `D:\SystemCheck\kettle\monitor.kjb`（`run_weekly.bat` 的 `KETTLE_JOB`），每週由 `run_weekly.bat` 執行，不用另外排程
+config.json 用到的設定：
 
-之後要換 template、輸出資料夾或天數，只改 config.json。
+```json
+"check_sheet": { "template": "D:/SystemCheck/template/BOS_系統穩定健檢狀態記錄表_template.xlsx", ... },
+"monitor": { "csv_dir": "D:/SystemCheck/monitor", "days": 7, ... }
+```
+
+> 為什麼要分兩支 ktr：Set Variables 設的變數，**同一支** transformation 讀不到，
+> 所以先由 read_config.ktr 設好，Job 再執行 monitor.ktr 使用。
+
+#### 1. read_config.ktr
+
+```
+JSON input → Set Variables
+```
+
+**JSON input**（Input 分類）
+- File 頁：File or directory 選 `D:\SystemCheck\config.json`，**按 Add** 加進清單（沒按 Add 不會讀）
+- Content 頁：Encoding `UTF-8`
+- Fields 頁（Type 全部 String）：
+
+  | Name | Path | Type |
+  |---|---|---|
+  | TEMPLATE | `$.check_sheet.template` | String |
+  | MONITOR_DIR | `$.monitor.csv_dir` | String |
+  | DAYS | `$.monitor.days` | String |
+
+- 按 Preview 應看到 **1 列**三個值
+
+**Set Variables**（Job 分類）
+- 三列：Field name = Variable name = `TEMPLATE` / `MONITOR_DIR` / `DAYS`
+- Variable scope type：**Valid in the root job**
+
+#### 2. monitor.ktr
+
+```
+Microsoft Excel input → Filter rows → Select values → Table input → Text file output
+```
+
+**Microsoft Excel input**
+- Files 頁：File or directory 填 `${TEMPLATE}`，**按 Add**
+- Sheets 頁：加入檢核表的工作表名稱
+- Content 頁：勾 Header
+- Fields 頁：`Host Name`、`CPU`、`Memory`、`SWAP`、`Disk 1`、`Disk 2`、`Disk 3`，Type 全部 String
+  （名稱要和 template 第一列的標題一樣）
+
+**Filter rows**
+- 條件：`NOT ( Host Name STARTS WITH '(季檢' )` → 排除季檢分隔列；可再加 `AND Host Name IS NOT NULL`
+- **不要用 LIKE '(季檢%'**：Kettle 會轉成 regex，`(` 沒跳脫會出錯；括號全形/半形要和 Excel 一樣
+- Send 'true' data to step = Select values，false 留空
+
+**Select values**：Select & Alter 頁依序只留
+`Host Name, CPU, Memory, SWAP, Disk 1, Disk 2, Disk 3`（對應 SQL 的 7 個 `?`）
+
+**Table input**
+- Connection `smt`
+- **Insert data from step** = Select values（必須是直接上游）
+- 勾 **Execute for each row?**（逐台執行）
+- 勾 **Replace variables in script?**（`${MONITOR_DIR}`、`${DAYS}` 才會被換掉）
+- SQL：
+
+```sql
+with p as (
+  select ? as h,
+         upper(trim(?)) = 'O' as c_cpu,
+         upper(trim(?)) = 'O' as c_mem,
+         upper(trim(?)) = 'O' as c_swap,
+         upper(trim(?)) = 'O' as c_d1,
+         upper(trim(?)) = 'O' as c_d2,
+         upper(trim(?)) = 'O' as c_d3,
+         concat('${MONITOR_DIR}', '/') as dir
+),
+d as (
+  -- 只留「有打 O 且對得到類別」的項目：對不到的主機不產生檔案，也不會有只有時間的列
+  select tm, item, monitor_data, upper_spec from (
+    select date_format(t.monitor_time, '%Y-%m-%d %H:%i') as tm,
+           case
+             when t.monitor_item = 'CPU Usage'    then 'cpu'
+             when t.monitor_item = 'Memory Usage' then 'mem'
+             when t.monitor_item = 'SWAP'         then 'swap'
+             when t.monitor_item in ('C:Disk Usage', '/Disk Usage') then 'd1'
+             when t.monitor_item in ('D:Disk Usage', '/oradata Disk Usage', '/ap01 Disk Usage',
+                                     '/db01 Disk Usage', '/dis Disk Usage', '/apex Disk Usage') then 'd2'
+             when t.monitor_item in ('E:Disk Usage', '/apbak Disk Usage', '/dbbak Disk Usage') then 'd3'
+           end as item,
+           t.monitor_data, t.upper_spec,
+           p.c_cpu, p.c_mem, p.c_swap, p.c_d1, p.c_d2, p.c_d3
+    from STM.monitor_system_history t join p on t.hostname = p.h
+    where t.monitor_time > now() - interval ${DAYS} day
+      and t.lm_time      > now() - interval ${DAYS} day
+  ) x
+  where (item = 'cpu' and c_cpu) or (item = 'mem' and c_mem) or (item = 'swap' and c_swap)
+     or (item = 'd1' and c_d1) or (item = 'd2' and c_d2) or (item = 'd3' and c_d3)
+)
+select concat(p.dir, p.h, '.csv') as filename, 0 as sort_key, '' as time_min,
+       concat_ws(',', 'time_min',
+         case when p.c_cpu  then 'cpu'    end,
+         case when p.c_mem  then 'memory' end,
+         case when p.c_swap then 'swap'   end,
+         case when p.c_d1   then 'disk1'  end,
+         case when p.c_d2   then 'disk2'  end,
+         case when p.c_d3   then 'disk3'  end) as line
+from p
+where exists (select 1 from d)
+union all
+select concat(p.dir, p.h, '.csv'), 1, '',
+       concat_ws(',', 'upper_spec',
+         case when p.c_cpu  then coalesce(cast(max(case when d.item = 'cpu'  then d.upper_spec end) as decimal(12,2)), '') end,
+         case when p.c_mem  then coalesce(cast(max(case when d.item = 'mem'  then d.upper_spec end) as decimal(12,2)), '') end,
+         case when p.c_swap then coalesce(cast(max(case when d.item = 'swap' then d.upper_spec end) as decimal(12,2)), '') end,
+         case when p.c_d1   then coalesce(cast(max(case when d.item = 'd1'   then d.upper_spec end) as decimal(12,2)), '') end,
+         case when p.c_d2   then coalesce(cast(max(case when d.item = 'd2'   then d.upper_spec end) as decimal(12,2)), '') end,
+         case when p.c_d3   then coalesce(cast(max(case when d.item = 'd3'   then d.upper_spec end) as decimal(12,2)), '') end)
+from d cross join p
+group by p.h, p.dir, p.c_cpu, p.c_mem, p.c_swap, p.c_d1, p.c_d2, p.c_d3
+union all
+select concat(p.dir, p.h, '.csv'), 2, d.tm,
+       concat_ws(',', d.tm,
+         case when p.c_cpu  then coalesce(cast(truncate(max(case when d.item = 'cpu'  then d.monitor_data end), 2) as decimal(12,2)), '') end,
+         case when p.c_mem  then coalesce(cast(truncate(max(case when d.item = 'mem'  then d.monitor_data end), 2) as decimal(12,2)), '') end,
+         case when p.c_swap then coalesce(cast(truncate(max(case when d.item = 'swap' then d.monitor_data end), 2) as decimal(12,2)), '') end,
+         case when p.c_d1   then coalesce(cast(truncate(max(case when d.item = 'd1'   then d.monitor_data end), 2) as decimal(12,2)), '') end,
+         case when p.c_d2   then coalesce(cast(truncate(max(case when d.item = 'd2'   then d.monitor_data end), 2) as decimal(12,2)), '') end,
+         case when p.c_d3   then coalesce(cast(truncate(max(case when d.item = 'd3'   then d.monitor_data end), 2) as decimal(12,2)), '') end)
+from d cross join p
+group by p.h, p.dir, p.c_cpu, p.c_mem, p.c_swap, p.c_d1, p.c_d2, p.c_d3, d.tm
+order by sort_key, time_min
+```
+
+  Linux 掛載點 / SWAP 的 `monitor_item` 字串請先用下面查詢核對，再補進 `in (...)`：
+  ```sql
+  select distinct monitor_item from STM.monitor_system_history
+  where monitor_time > now() - interval 1 day order by monitor_item;
+  ```
+
+**Text file output**
+- File 頁：
+  - 勾 **Accept file name from field?**，File name field = `filename`
+  - 勾 **Do not create file at start**（沒資料的主機不產生空檔）
+  - 勾 **Create Parent folder**
+  - Extension 清空（檔名已含 `.csv`）
+  - **不要勾 Append** → 每次覆蓋
+- Content 頁：Separator `,`、**Enclosure 清空**、**Header 不勾**、不勾 Force enclosure、Encoding `UTF-8`
+- Fields 頁：**只留 `line`**
+
+#### 3. monitor.kjb（Job）
+
+```
+Start → read_config.ktr → Write to log → Delete files → monitor.ktr → Success
+```
+
+| 項目 | 設定 |
+|---|---|
+| Transformation（read_config） | Transformation filename 按 **Browse** 選 `D:\SystemCheck\kettle\read_config.ktr`（用絕對路徑） |
+| Write to log | Log message：`TEMPLATE=${TEMPLATE} DIR=${MONITOR_DIR} DAYS=${DAYS}`（確認變數有讀到） |
+| Delete files（File management） | File/Folder = `${MONITOR_DIR}`、Wildcard (RegExp) = `.*\.csv`，不勾 Include subfolders。**先清掉上次的 CSV**，這次沒有資料的主機才不會留下舊檔 |
+| Transformation（monitor） | Browse 選 `D:\SystemCheck\kettle\monitor.ktr` |
+
+- 各步驟用**綠色（成功才往下）**的連線串起來，任一步失敗 Job 就以非 0 結束，`run_weekly.bat` 會把監控欄清空
+- 存成 `D:\SystemCheck\kettle\monitor.kjb`；每週由 `run_weekly.bat` 的 [2/4] 執行，不用另外排程
+
+#### 4. 測試
+
+1. Spoon 開 monitor.kjb 按 Run，log 的 Write to log 那行三個值正確
+2. `D:\SystemCheck\monitor\` 只剩這次有資料的主機 `<主機>.csv`，內容：
+   ```
+   time_min,cpu,disk2
+   upper_spec,60.00,420.00
+   2026-11-03 16:42,4.62,377.02
+   ```
+3. 命令列：`D:\data-integration\Kitchen.bat /file:D:\SystemCheck\kettle\monitor.kjb /level:Basic`，成功時結束碼 0
+4. 單獨跑 monitor.ktr 時讀不到 Job 的變數：在 Run 對話框的 **Variables** 頁手動填 TEMPLATE、MONITOR_DIR、DAYS
+
+#### 常見錯誤
+
+| 狀況 | 原因 / 解法 |
+|---|---|
+| `${Internal.Entry.Current.Directory}\read_config.ktr is invalid` | Job 沒存檔或連著 Repository；Transformation filename 改用 Browse 選絕對路徑 |
+| Excel input 找不到 `${TEMPLATE}` | 單獨跑 monitor.ktr，或 Set Variables 的 scope 不是 root job |
+| SQL syntax error near '$' | Table input 沒勾 Replace variables in script |
+| Unable to find rowset to read from | Insert data from step 沒選直接上游 Select values |
+| Set Variables：more than one row | JSON 路徑寫錯，對到多個值 |
+| Client does not support authentication protocol | JDBC 太舊，換 `mysql-connector-j-9.x` 放 `data-integration/lib/` |
+| Expression #N ... not in GROUP BY | group by 漏了 `p.*` 欄位；分鐘要用 CTE 算好的 `d.tm` |
+| 檔案只有時間沒有數值 | `monitor_item` 字串對不到；用上面的 distinct 查詢核對後補進 `in (...)` |
 
 ### 填進檢核表（fill_check）
 
@@ -439,7 +606,7 @@ Kettle 不寫死路徑，template、輸出資料夾、天數都從 `D:\SystemChe
 
 ```json
 "monitor": {
-    "csv_dir": "D:/SystemCheck/{yyyy}-W{ww}",
+    "csv_dir": "D:/SystemCheck/monitor",
     "columns": {"CPU": "cpu", "Memory": "memory", "SWAP": "swap", "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"},
     "trend": null
 }
@@ -474,23 +641,7 @@ Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「
    where hostname in ('P3-APX-AP02V', 'T1-GUI-AP01P') and monitor_time > now() - interval 7 day
    group by hostname, monitor_item order by hostname, monitor_item;
    ```
-2. CTE `d` 只留「有打 O 且對得到」的項目，三段 union 都跟著正確，對不到的主機也不會產生檔案：
-   ```sql
-   d as (
-     select tm, item, monitor_data, upper_spec from (
-       select date_format(t.monitor_time, '%Y-%m-%d %H:%i') as tm,
-              case ... end as item,          -- 原本的 case 不變
-              t.monitor_data, t.upper_spec,
-              p.c_cpu, p.c_mem, p.c_swap, p.c_d1, p.c_d2, p.c_d3
-       from STM.monitor_system_history t join p on t.hostname = p.h
-       where t.monitor_time > now() - interval 7 day
-         and t.lm_time > now() - interval 7 day
-     ) x
-     where (item = 'cpu' and c_cpu) or (item = 'mem' and c_mem) or (item = 'swap' and c_swap)
-        or (item = 'd1' and c_d1) or (item = 'd2' and c_d2) or (item = 'd3' and c_d3)
-   )
-   ```
-   標題列的 `where exists (select 1 from d where d.item is not null)` 可改成 `where exists (select 1 from d)`。
+2. 「Kettle 完整作法」裡的 SQL 已在 CTE `d` 只留「有打 O 且對得到」的項目，對不到的主機不會產生檔案；舊版 SQL 請整段換成新版。
 
 ## 設定檔 config.json
 
