@@ -88,6 +88,9 @@ os.makedirs(csv_dir, exist_ok=True)
 hdr = "LevelDisplayName,Id,LogName,Message,TimeCreated,Count\n"
 open(os.path.join(csv_dir, "20261015_SRV-A.csv"), "w", encoding="utf-8-sig").write(
     hdr + "錯誤,1801,System,boot cert,2026-10-15 10:00:00,1\n警告,10016,System,DCOM,2026-10-15 10:00:00,3\n")
+if MODE == "weekdir":   # 撈取腳本新檔名 <伺服器>.csv（沒有日期、每次覆蓋）→ 算目標週（--week W2642）
+    open(os.path.join(csv_dir, "SRV-E.csv"), "w", encoding="utf-8-sig").write(
+        "LevelDisplayName,Id,LogName,Message,TimeCreated,Count\n警告,4625,Security,logon failure,2026-10-16 09:00:00,2\n")
 open(os.path.join(csv_dir, "20261008_SRV-B.csv"), "w", encoding="utf-8-sig").write(
     hdr + "錯誤,999,System,last week error,2026-10-08 10:00:00,1\n")
 
@@ -165,7 +168,9 @@ assert v("E5") is None and (v("C5"), v("D5")) == ("O", "O"), (v("E5"), v("C5"), 
 # separator row 6 untouched
 assert all(v(f"{c}6") is None for c in "BCDEFGH"), [v(f"{c}6") for c in "BCDEFGH"]
 # SRV-E (row 7): black error cell untouched, warning O, antivirus O
-assert v("C7") is None and v("D7") == "O" and v("E7") == "O", (v("C7"), v("D7"), v("E7"))
+assert v("C7") is None and v("D7") == ("X" if MODE == "weekdir" else "O") and v("E7") == "O", (v("C7"), v("D7"), v("E7"))
+if MODE == "weekdir":
+    assert "4625" in v("H7"), v("H7")
 # antivirus O on normal rows
 assert [v(f"E{r}") for r in (2, 3)] == ["O", "O"]
 # links
@@ -198,7 +203,8 @@ if MODE == "monitor":
 # tracking sheet: only this week's CSV pasted
 trs = openpyxl.load_workbook(track)["事件檢視器_BOS"]
 pasted = [(r[0], r[1]) for r in trs.iter_rows(min_row=2, values_only=True) if r[0]]
-assert pasted and all(p == ("SRV-A", "W2642") for p in pasted), pasted
+expected = {("SRV-A", "W2642")} | ({("SRV-E", "W2642")} if MODE == "weekdir" else set())
+assert pasted and set(pasted) == expected, pasted
 
 # second run keeps manual edits made in the weekly file
 wb = openpyxl.load_workbook(out)

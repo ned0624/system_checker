@@ -33,7 +33,7 @@ pip install pandas openpyxl
 ```
 D:\SystemCheck\
 ├─ run_weekly.bat          ← 每週點這個
-├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
+├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\伺服器名.csv（每次覆蓋）
 ├─ serverlist.txt          伺服器清單（一行一台）
 ├─ excluded_ids.txt        撈取時直接排除的事件 ID
 ├─ fill_check.py          填檢核表、貼追蹤表（或 fill_check\ 資料夾內的 exe）
@@ -49,14 +49,17 @@ D:\SystemCheck\
 
 | 腳本 | 在哪裡執行 | 撈誰 | 輸出 |
 |---|---|---|---|
-| `EventLogCheck.ps1` | 你的電腦（`run_weekly.bat` 用這支） | `serverlist.txt` 裡的每台伺服器（遠端） | `EventLog\日期_伺服器名.csv` |
-| `EventLogCheck_Local.ps1` | 每台伺服器上 | 本機 | `EventLog\日期_電腦名稱.csv` |
+| `EventLogCheck.ps1` | 你的電腦（`run_weekly.bat` 用這支） | `serverlist.txt` 裡的每台伺服器（遠端） | `EventLog\伺服器名.csv` |
+| `EventLogCheck_Local.ps1` | 每台伺服器上 | 本機 | `EventLog\電腦名稱.csv` |
 
 共同行為：
+- CSV 輸出到**固定資料夾**（SETTINGS 的 `OutDir`，例 `D:\SystemCheck\EventLog`），檔名 `<伺服器>.csv`，**每次執行直接覆蓋**；
+  config.json 的 `paths.csv_dir` 要指同一個資料夾
 - 只抓 **重大 / 錯誤 / 警告**（Level 1~3），不抓資訊；預設近 7 天
 - 同一來源、同一 ID 只留一筆，`TimeCreated` 為最近一次發生時間，`Count` 為期間內次數
 - 某個記錄檔讀取失敗會寫進 log；整台連不上時**不產生 CSV**，log 最後列出「撈取失敗」的伺服器
-- 排除後沒有任何錯誤/警告的伺服器**不產生 CSV**，只在 log 記錄（檢核表那一列不會自動填，請手動填 O O）
+- 排除後沒有任何錯誤/警告的伺服器**不產生 CSV**，只在 log 記錄
+- 這次沒產生 CSV（沒有事件或撈取失敗）時，會**刪掉上次留下的 `<伺服器>.csv`**（log：`removed old CSV`），fill_check 不會誤用舊資料，該台填 O O
 - 結束碼：`0` 有寫出 CSV、`1` 錯誤（資料夾無法寫入／全部伺服器失敗）、`2` 沒有任何事件可報告（bat 會略過填表）
 - 開始時會測試輸出與 log 資料夾能否寫入；不行就顯示執行帳號並停止（共用資料夾需給該帳號「修改」權限）
 - log：`EventLogCheck.ps1` 與 fill_check 共用 `logs\日期.log`；`EventLogCheck_Local.ps1` 寫 `logs\日期_電腦名稱.log`（例如 `20261029_T1-WFA-AP02V.log`），多台寫到同一個共用資料夾也分得開
@@ -135,11 +138,13 @@ set KETTLE_JOB=%BASE%\kettle\monitor.kjb
 把本週的 CSV 放到 `csv/` 資料夾，檔名格式：
 
 ```
-日期_伺服器名.csv      例: 20261015_P3-WFA-AP01V.csv
+伺服器名.csv           例: P3-WFA-AP01V.csv（撈取腳本的輸出，每次覆蓋）
+日期_伺服器名.csv      例: 20261015_P3-WFA-AP01V.csv（舊格式，仍可讀）
 ```
 
 - 伺服器名要與 BOS_SystemCheck.xlsx 第一欄的名稱相同（不分大小寫）
-- 日期用來計算週別；省略日期時以執行當天計算
+- 沒有日期的檔名一律算**目標週**（預設本週，`--week` 指定的週也一樣），追蹤表的「周」填目標週；
+  有日期的舊檔名照舊依日期計算週別，只處理目標週的；同一台兩種都有時用沒有日期的
 - CSV 需有 `ID`、`事件分類`、`事件說明` 欄位（欄名可在 config.json 修改），編碼 UTF-8 或 Big5 皆可
 - 只讀等級為「錯誤」「警告」的事件（「重大 / Critical」算錯誤），「資訊」等其他等級一律略過，不填檢核表也不貼追蹤表
 

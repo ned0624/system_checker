@@ -8,7 +8,6 @@ import glob
 import os
 import re
 import sys
-from datetime import date
 
 import pandas as pd
 
@@ -35,12 +34,12 @@ if mode == "make":
         print("made", variant, enc, base)
 else:
     computer = sys.argv[3]
-    today = date.today().strftime("%Y%m%d")
     for variant, enc, folder in VARIANTS:
         base = os.path.join(tmp, folder)
-        csv = os.path.join(base, "EventLog", f"{today}_{computer}.csv")
+        csv = os.path.join(base, "EventLog", f"{computer}.csv")   # <電腦名稱>.csv，每次覆蓋
         csvs = glob.glob(os.path.join(base, "EventLog", "*.csv"))
         assert csvs, f"{variant}: no CSV in {base}\\EventLog"
+        assert [os.path.normcase(c) for c in csvs] == [os.path.normcase(csv)], f"{variant}: expected {csv}, got {csvs}"
         df = pd.read_csv(csvs[0], dtype=str, encoding="utf-8-sig")
         assert set(df["LevelDisplayName"].dropna()) <= {"重大", "錯誤", "警告"}, df["LevelDisplayName"].unique()
         assert glob.glob(os.path.join(base, "logs", "*.log")), f"{variant}: no log"

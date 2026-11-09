@@ -1,6 +1,6 @@
 # Collect event log errors/warnings of a period (default: last 7 days) on THIS computer, one CSV:
-#   <OutDir>\yyyyMMdd_<computer name>.csv
-# Log file: <LogDir>\yyyyMMdd_<computer name>.log (date = end of the period, same as the CSV)
+#   <OutDir>\<computer name>.csv (overwritten every run)
+# Log file: <LogDir>\yyyyMMdd_<computer name>.log (date = end of the period)
 # Usage (run on each server): powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 [-OutDir ...] [-LogDir ...] [-StartTime 2026-10-15] [-EndTime 2026-10-22] [-Days 7] [-ExcludeFile ...]
 # - OutDir can be a share (e.g. \\fileserver\SystemCheck\EventLog) to collect all servers' CSVs
 # - Only Critical/Error/Warning (Level 1-3), no Information; no CSV when none are left after exclusion
@@ -116,7 +116,7 @@ if ($start -ge $end) {
     Write-Host "[ERROR] StartTime ($($start.ToString('yyyy-MM-dd HH:mm'))) must be earlier than EndTime ($($end.ToString('yyyy-MM-dd HH:mm')))"
     exit 1
 }
-# CSV file date and {week} follow the END of the period (= today when EndTime is not set)
+# Log file date and {week} follow the END of the period (= today when EndTime is not set)
 $date    = $end.ToString('yyyyMMdd')
 $week    = Get-IsoWeek $end
 $period  = "$($start.ToString('yyyy-MM-dd HH:mm')) ~ $($end.ToString('yyyy-MM-dd HH:mm')) (week $week)"
@@ -196,9 +196,29 @@ function Read-ExcludeIds {
     return $ids
 }
 
-# Collect events of one computer and write its CSV; $server = $null means local.
+# Collect events of one computer and write <OutDir>\<name>.csv (overwritten every run); $server = $null means local.
 # Returns 'ok' (CSV written), 'empty' (no events left after exclusion, no CSV) or 'fail'.
+# When no CSV is written this time, the old <name>.csv is removed so fill_check does not use the previous run.
 function Export-ServerEvents([string]$server, [string]$name) {
+    $result = Export-ServerCsv $server $name
+    if ($result -ne 'ok') { Remove-OldCsv $name }
+    return $result
+}
+
+function Remove-OldCsv([string]$name) {
+    $old = Join-Path $OutDir "$name.csv"
+    if (Test-Path -LiteralPath $old -PathType Leaf) {
+        try {
+            Remove-Item -LiteralPath $old -Force -ErrorAction Stop
+            Write-Log "  $name : removed old CSV $old"
+        }
+        catch {
+            Write-Log "  [WARN] $name cannot remove old CSV $old : $($_.Exception.Message)"
+        }
+    }
+}
+
+function Export-ServerCsv([string]$server, [string]$name) {
     $remote = @{}
     if ($server) { $remote.ComputerName = $server }
 
@@ -257,7 +277,7 @@ function Export-ServerEvents([string]$server, [string]$name) {
     }
 
     # -Encoding UTF8 = UTF-8 with BOM in Windows PowerShell 5.1
-    $csv = Join-Path $OutDir "${date}_$name.csv"
+    $csv = Join-Path $OutDir "$name.csv"
     try {
         $rows | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
     }

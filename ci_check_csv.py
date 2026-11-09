@@ -7,7 +7,9 @@ import sys
 import pandas as pd
 
 ev_dir, computer, log_dir = sys.argv[1:4]
-files = {os.path.basename(p).split("_", 1)[1][:-4].upper(): p for p in glob.glob(os.path.join(ev_dir, "*.csv"))}
+# 檔名 = <伺服器>.csv（每次覆蓋，沒有日期）
+files = {os.path.basename(p)[:-4].upper(): p for p in glob.glob(os.path.join(ev_dir, "*.csv"))}
+assert not any(re.match(r"\d{8}_", f) for f in files), f"CSV name must not start with a date: {sorted(files)}"
 print("CSV:", sorted(files))
 assert computer.upper() in files, "local version did not produce CSV"
 assert "LOCALHOST" in files, "server-list version did not produce CSV for localhost"

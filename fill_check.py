@@ -495,7 +495,8 @@ def write_monitor(ws, host_rows, plan, note_col):
 # ---------- 問題追蹤表 ----------
 
 def parse_filename(path):
-    """檔名拆出 (伺服器名, 日期)，例: 20261015_P3-WFA-AP01V.csv → (P3-WFA-AP01V, 2026-10-15)"""
+    """檔名拆出 (伺服器名, 日期)，例: 20261015_P3-WFA-AP01V.csv → (P3-WFA-AP01V, 2026-10-15)
+    撈取腳本現在輸出 P3-WFA-AP01V.csv（每次覆蓋、沒有日期）→ 日期回傳 None，由 main 視為目標週"""
     name = os.path.splitext(os.path.basename(path))[0].strip()
     m = re.match(r"^(\d{8})_(.+)$", name)
     if m:
@@ -503,7 +504,7 @@ def parse_filename(path):
             return m.group(2).strip(), datetime.strptime(m.group(1), "%Y%m%d").date()
         except ValueError:
             pass
-    return re.sub(r"^\d+_", "", name), date.today()
+    return re.sub(r"^\d+_", "", name), None
 
 
 def week_label(d):
@@ -719,7 +720,9 @@ def main():
     latest = {}  # 伺服器 → (日期, 路徑)；同一週有多次時取最新日期
     for p in all_csv:
         host, d = parse_filename(p)
-        if week_label(d) == week and (host.upper() not in latest or d > latest[host.upper()][0]):
+        # 沒有日期的檔名（<伺服器>.csv，固定資料夾每次覆蓋）= 最近一次撈取 → 一律算目標週，優先於有日期的舊檔
+        d = d or date.max
+        if (d == date.max or week_label(d) == week) and (host.upper() not in latest or d > latest[host.upper()][0]):
             latest[host.upper()] = (d, p)
     csv_files = sorted(p for _, p in latest.values())
     other = len(all_csv) - len(csv_files)
@@ -781,7 +784,7 @@ def main():
             check = None
             print(f"  [ERROR] Check sheet: {e}")
             problems.append((fname, f"ERROR: O/X not filled ({e})"))
-        results.append(dict(host=host, week=week_label(d), fname=fname, df=df, check=check))
+        results.append(dict(host=host, week=week_label(d) if d else week, fname=fname, df=df, check=check))
 
     # ---- 1b. 監控數據：依範本打 O 的格子算出 O/X 與備註 ----
     monitor = None
