@@ -4,6 +4,13 @@
         "check_xlsx": "D:/改成檢核表所在資料夾/BOS_系統穩定健檢狀態記錄表_{week}.xlsx",
         "track_xlsx": "D:/改成追蹤表所在資料夾/系統檢核問題追蹤.xlsx"
     },
+    "eventlog": {
+        "server_list": "D:/SystemCheck/serverlist.txt",
+        "exclude_file": "D:/SystemCheck/excluded_ids.txt",
+        "days": 7,
+        "start_time": "",
+        "end_time": ""
+    },
     "ignore_list": {
         "sheet": "可忽略事件ID",
         "id_column": "可忽略事件ID"

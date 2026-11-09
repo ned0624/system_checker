@@ -17,13 +17,14 @@ param(
 )
 
 # ===== SETTINGS =====================================================================
-# Edit the values between the @' and '@ lines. Chinese folder names and network share
+# run_weekly.bat passes the paths from config.json as parameters (run_collector.ps1); these values are
+# used when the script is run on its own. Edit the values between the @' and '@ lines. Chinese folder names and network share
 # paths (\\server\share\...) are OK: the script re-reads this block from the file itself and
 # detects the file encoding (UTF-8 with/without BOM, or ANSI/Big5), so how Notepad saves
 # the file does not matter. Command-line parameters (-OutDir etc.) override these values.
 # Period: StartTime / EndTime as yyyy-MM-dd or yyyy-MM-dd HH:mm (date only = 00:00). Empty EndTime = now,
 # empty StartTime = EndTime minus Days, empty Days = 7.
-# Paths may contain {week} (W2643), {yy} (26), {ww} (43) - replaced with the ISO week of the period end,
+# Paths may contain {week} (W2643), {yyyy} (2026), {yy} (26), {ww} (43) - replaced with the ISO week of the period end,
 # e.g. OutDir = Z:\...\System Check\{week}\Reference\BOS
 $Settings = @'
 OutDir      = D:\SystemCheck\EventLog
@@ -121,11 +122,11 @@ $date    = $end.ToString('yyyyMMdd')
 $week    = Get-IsoWeek $end
 $period  = "$($start.ToString('yyyy-MM-dd HH:mm')) ~ $($end.ToString('yyyy-MM-dd HH:mm')) (week $week)"
 
-# {week} / {yy} / {ww} in paths -> this week, e.g. ...\System Check\{week}\Reference\BOS -> ...\W2643\...
+# {week} / {yyyy} / {yy} / {ww} in paths -> this week, e.g. ...\System Check\{week}\Reference\BOS -> ...\W2643\...
 foreach ($key in @('OutDir', 'LogDir', 'ExcludeFile')) {
     $val = Get-Variable -Name $key -ValueOnly
     if ($val) {
-        Set-Variable -Name $key -Value ($val.Replace('{week}', $week).Replace('{yy}', $week.Substring(1, 2)).Replace('{ww}', $week.Substring(3, 2)))
+        Set-Variable -Name $key -Value ($val.Replace('{week}', $week).Replace('{yyyy}', '20' + $week.Substring(1, 2)).Replace('{yy}', $week.Substring(1, 2)).Replace('{ww}', $week.Substring(3, 2)))
     }
 }
 $utf8Bom = New-Object Text.UTF8Encoding($true)

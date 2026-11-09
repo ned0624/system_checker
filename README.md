@@ -33,6 +33,7 @@ pip install pandas openpyxl
 ```
 D:\SystemCheck\
 ├─ run_weekly.bat          ← 每週點這個
+├─ run_collector.ps1       run_weekly.bat 用來執行撈取腳本，路徑從 config.json 傳入
 ├─ run_kettle.ps1          run_weekly.bat 用來執行 Kettle Job，log 寫到 log_dir
 ├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
 ├─ serverlist.txt          伺服器清單（一行一台）
@@ -65,7 +66,31 @@ D:\SystemCheck\
   所以不會出現在檢核表備註與追蹤表。檔案不存在就不排除。一行一個或用逗號分隔，`#` 之後是註解。
   log 會記錄載入了幾個 ID、每台排除了幾筆事件。
 
-**路徑設定**：直接改 ps1 開頭的 `SETTINGS` 區塊（`$Settings = @'` 到 `'@` 之間），例如：
+**路徑設定（run_weekly.bat）**：bat 透過 `run_collector.ps1` 讀 `D:\SystemCheck\config.json`，用參數傳給撈取腳本，
+**不用改 ps1**：
+
+| config.json | ps1 參數 | 說明 |
+|---|---|---|
+| `paths.csv_dir` | `-OutDir` | CSV 輸出資料夾（就是 fill_check 讀的資料夾，兩邊自動一致） |
+| `log_dir` | `-LogDir` | log 資料夾 |
+| `eventlog.server_list` | `-ServerList` | 伺服器清單（只有 EventLogCheck.ps1） |
+| `eventlog.exclude_file` | `-ExcludeFile` | 排除 ID 清單 |
+| `eventlog.days` / `start_time` / `end_time` | `-Days` / `-StartTime` / `-EndTime` | 撈取區間，空字串 = 不設定 |
+
+```json
+"eventlog": {
+    "server_list": "D:/SystemCheck/serverlist.txt",
+    "exclude_file": "D:/SystemCheck/excluded_ids.txt",
+    "days": 7,
+    "start_time": "",
+    "end_time": ""
+}
+```
+- 路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww}`（撈取區間結束日的 ISO 週）、中文與 `\\server\share`（JSON 裡寫 `//server/share/...`）；相對路徑以 config.json 所在資料夾為基準
+- 畫面會先印出 `Config:` 與實際傳入的參數
+- config.json 沒有的設定不傳，ps1 改用自己的 SETTINGS 區塊
+
+**單獨執行 ps1 時**（例如本機版直接在伺服器上跑）才用 ps1 開頭的 `SETTINGS` 區塊（`$Settings = @'` 到 `'@` 之間），例如：
 ```
 $Settings = @'
 OutDir      = \\xintec.com.tw\Supporting_Org\中文資料夾\BOS\Z0_Others\SystemCheck\EventLog
@@ -76,9 +101,9 @@ Days        = 7
 ```
 可以寫中文資料夾與共用資料夾路徑：程式會自己判斷 ps1 的存檔編碼（UTF-8 有無 BOM、ANSI 都可以）重新讀這一段，
 不會再變成亂碼。輸出或 log 資料夾無法建立/寫入、或所有伺服器都失敗時，ps1 會以結束碼 1 結束，`run_weekly.bat` 會停下不填表。
-`fill_check` 讀 CSV 的資料夾是 config.json 的 `paths.csv_dir`，要和 ps1 的 `OutDir` 指同一個位置。
+單獨執行 ps1 時，SETTINGS 的 `OutDir` 要和 config.json 的 `paths.csv_dir` 指同一個位置（用 run_weekly.bat 時自動一致）。
 
-**撈取時間**：SETTINGS 的 `StartTime` / `EndTime`（格式 `yyyy-MM-dd` 或 `yyyy-MM-dd HH:mm`，只寫日期 = 當天 00:00）：
+**撈取時間**：config.json 的 `eventlog.start_time` / `end_time`（單獨執行時為 SETTINGS 的 `StartTime` / `EndTime`）（格式 `yyyy-MM-dd` 或 `yyyy-MM-dd HH:mm`，只寫日期 = 當天 00:00）：
 
 | 設定 | 撈取區間 |
 |---|---|
@@ -109,7 +134,7 @@ CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤
 
 | 步驟 | 內容 | 失敗時 |
 |---|---|---|
-| [1/4] 撈 event log | `COLLECTOR` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時把 `set COLLECTOR=` 改成 `EventLogCheck_Local.ps1`） | 結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
+| [1/4] 撈 event log | `run_collector.ps1` 讀 config.json，把路徑當參數執行 `COLLECTOR` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時把 `set COLLECTOR=` 改成 `EventLogCheck_Local.ps1`） | 讀不到 config.json 或結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
 | [2/4] Kettle | `run_kettle.ps1` 執行 `%KITCHEN% /file:%KETTLE_JOB%`，log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
 | [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → **繼續填表但監控欄清空** |
 | [4/4] fill_check | 有 `fill_check\fill_check.exe` 就執行 exe，沒有就用 Python；[2]、[3] 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |

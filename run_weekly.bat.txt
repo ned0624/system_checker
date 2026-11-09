@@ -10,7 +10,8 @@ set BASE=D:\SystemCheck
 REM Which collector to use:
 REM   EventLogCheck.ps1        = collect from every server in the server list (remote)
 REM   EventLogCheck_Local.ps1  = collect from this computer only
-REM Folders (CSV output, log, server list, exclude list) are set in the SETTINGS block of the ps1
+REM Folders come from D:\SystemCheck\config.json (run_collector.ps1 passes them to the ps1):
+REM   paths.csv_dir = CSV output, log_dir = log, eventlog.server_list / exclude_file / days
 set COLLECTOR=EventLogCheck.ps1
 
 REM Kettle (Pentaho Data Integration): Kitchen.bat and the monitor job (read_config.ktr + monitor.ktr)
@@ -22,7 +23,7 @@ set MONITOR_FAILED=
 set FAILED_STEPS=
 
 echo [1/4] Collecting event logs with %COLLECTOR% ...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%BASE%\%COLLECTOR%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%BASE%\run_collector.ps1" -Base "%BASE%" -Collector "%COLLECTOR%"
 REM Exit code 2 = no errors/warnings left after exclusion, no CSV written.
 REM The next steps still run: fill_check only uses this week's CSVs and creates this week's check sheet (all O).
 REM (check 2 first: "if errorlevel N" means "exit code >= N")
@@ -34,7 +35,7 @@ REM Exit code 1 = error (folder not writable, or every server failed)
 if errorlevel 1 (
     echo.
     echo [ERROR] Event log collection failed. Stopped before Kettle and filling the Excel files.
-    echo         See the messages above and the log folder set in %COLLECTOR%
+    echo         See the messages above and the log folder (log_dir in config.json)
     goto END
 )
 
