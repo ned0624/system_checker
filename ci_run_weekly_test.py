@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""CI（Windows）：用假的撈取腳本、Kitchen、monitor_check、fill_check 測 run_weekly.bat 的流程
+"""CI（Windows）：用假的撈取腳本、Kitchen、monitor_check、fill_check 測 run_weekly.bat → run_weekly.ps1 的流程
 
-情境：全部成功 / Kettle 失敗 / monitor_check 失敗 / 撈 event log 失敗
+情境：全部成功 / Kettle 失敗 / monitor_check 失敗 / 沒有 config.json / 沒有事件 / 撈 event log 失敗，
+另外用真的 EventLogCheck.ps1 / EventLogCheck_Local.ps1 跑一次（config.json 的中文 + {week} 路徑）
 用法: python ci_run_weekly_test.py <tmp資料夾>
 """
 import json
@@ -19,15 +20,12 @@ def scenario(name, collector=0, kitchen=0, monitor=0, config=True):
     shutil.rmtree(base, ignore_errors=True)
     os.makedirs(os.path.join(base, "kettle"))
     log = os.path.join(base, "calls.txt")
-    bat = open("run_weekly.bat", encoding="ascii").read()
-    bat = bat.replace(r"set BASE=D:\SystemCheck", f"set BASE={base}")
-    bat = bat.replace(r"set KITCHEN=D:\data-integration\Kitchen.bat", rf"set KITCHEN={base}\Kitchen.bat")
-    assert base in bat and rf"{base}\Kitchen.bat" in bat, "bat variables not found"
-    open(os.path.join(base, "run_weekly.bat"), "w", encoding="ascii", newline="\r\n").write(bat)
-    shutil.copy("run_kettle.ps1", base)
-    shutil.copy("run_collector.ps1", base)
+    shutil.copy("run_weekly.bat", base)   # bat 用 %~dp0 找同資料夾的 run_weekly.ps1
+    shutil.copy("run_weekly.ps1", base)
     if config:   # log_dir 相對路徑 + {week} → <base>\W2645\logs；路徑從 config.json 傳給撈取腳本
         json.dump({"log_dir": "{week}/logs",
+                   "weekly": {"collector": "EventLogCheck.ps1", "kitchen": "Kitchen.bat",
+                              "kettle_job": "kettle/monitor.kjb"},
                    "paths": {"csv_dir": "//fileserver/中文資料夾/{week}/BOS"},
                    "eventlog": {"server_list": "serverlist.txt", "exclude_file": "D:/SystemCheck/excluded_ids.txt",
                                 "days": 7, "start_time": "", "end_time": ""}},
@@ -84,7 +82,7 @@ assert "Failed steps: monitor_check" in out, out
 
 out, calls = scenario("no_config", config=False)   # config.json 讀不到 → [1/4] 失敗，整個停止
 assert calls == [], calls
-assert "Cannot read" in out and "Event log collection failed" in out, out
+assert "Cannot read" in out and "[1/4]" not in out, out
 
 out, calls = scenario("no_events", collector=2)   # exit 2 = no CSV, the rest still runs
 assert [c.split()[0] for c in calls] == ["collector", "kitchen", "monitor", "fill"], calls
@@ -92,26 +90,28 @@ assert [c.split()[0] for c in calls] == ["collector", "kitchen", "monitor", "fil
 out, calls = scenario("collector_failed", collector=1)
 assert calls == ["collector"], calls
 assert "Event log collection failed" in out, out
-# ===== 真的撈取腳本經 run_collector.ps1：config.json 的中文 + {week} 路徑、相對路徑 =====
+# ===== 真的撈取腳本經 run_weekly.ps1：config.json 的中文 + {week} 路徑、相對路徑 =====
 real = os.path.join(tmp, "real")
 shutil.rmtree(real, ignore_errors=True)
 os.makedirs(real)
-for f in ("EventLogCheck.ps1", "EventLogCheck_Local.ps1", "run_collector.ps1"):
+for f in ("EventLogCheck.ps1", "EventLogCheck_Local.ps1", "run_weekly.ps1"):
     shutil.copy(f, real)
+open(os.path.join(real, "fill_check.py"), "w").write("import sys\nsys.exit(0)\n")   # Kitchen 不存在 → Kettle 失敗，直接填表
 open(os.path.join(real, "servers.txt"), "w").write("localhost\n")
 open(os.path.join(real, "ex.txt"), "w").write("# test\n11\n")
-json.dump({"log_dir": "記錄檔", "paths": {"csv_dir": "中文資料夾/{week}/BOS"},
-           "eventlog": {"server_list": "servers.txt", "exclude_file": "ex.txt", "days": 7}},
-          open(os.path.join(real, "config.json"), "w", encoding="utf-8"), ensure_ascii=False)
 week = f"W{y % 100:02d}{w:02d}"
 for collector, host in (("EventLogCheck.ps1", "LOCALHOST"), ("EventLogCheck_Local.ps1", os.environ["COMPUTERNAME"].upper())):
+    json.dump({"log_dir": "記錄檔", "paths": {"csv_dir": "中文資料夾/{week}/BOS"},
+               "weekly": {"collector": collector, "kitchen": "no_kitchen.bat", "kettle_job": "no.kjb"},
+               "eventlog": {"server_list": "servers.txt", "exclude_file": "ex.txt", "days": 7}},
+              open(os.path.join(real, "config.json"), "w", encoding="utf-8"), ensure_ascii=False)
     r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                        os.path.join(real, "run_collector.ps1"), "-Base", real, "-Collector", collector],
-                       capture_output=True, text=True, errors="replace")
+                        os.path.join(real, "run_weekly.ps1")], capture_output=True, text=True, errors="replace")
     print(f"--- real {collector} (exit {r.returncode})\n{r.stdout}\n{r.stderr}")
-    assert r.returncode in (0, 2), r.returncode
+    assert r.returncode == 0 and "Event log collection failed" not in r.stdout, r.returncode
+    assert "Failed steps: Kettle" in r.stdout, r.stdout
     csv_dir = os.path.join(real, "中文資料夾", week, "BOS")
-    if r.returncode == 0:
+    if "No error/warning events after exclusion" not in r.stdout:   # 撈到事件才有 CSV
         names = [n.upper() for n in os.listdir(csv_dir)]
         assert any(n.endswith(f"_{host}.CSV") for n in names), (collector, names)
 logs = os.listdir(os.path.join(real, "記錄檔"))

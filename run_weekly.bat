@@ -1,104 +1,11 @@
 @echo off
-REM Weekly system check:
-REM   1. collect event log CSVs          (EventLogCheck.ps1)
-REM   2. export monitor data             (Kettle job, reads D:\SystemCheck\config.json)
-REM   3. monitor report                  (monitor_check)
-REM   4. fill check sheet and tracking sheet (fill_check)
-REM Double-click to run, or add to Task Scheduler
-set BASE=D:\SystemCheck
-
-REM Which collector to use:
-REM   EventLogCheck.ps1        = collect from every server in the server list (remote)
-REM   EventLogCheck_Local.ps1  = collect from this computer only
-REM Folders come from D:\SystemCheck\config.json (run_collector.ps1 passes them to the ps1):
-REM   paths.csv_dir = CSV output, log_dir = log, eventlog.server_list / exclude_file / days
-set COLLECTOR=EventLogCheck.ps1
-
-REM Kettle (Pentaho Data Integration): Kitchen.bat and the monitor job (read_config.ktr + monitor.ktr)
-REM The Kettle log goes to log_dir of config.json: <log_dir>\yyyyMMdd_kettle.log
-set KITCHEN=D:\data-integration\Kitchen.bat
-set KETTLE_JOB=%BASE%\kettle\monitor.kjb
-
-set MONITOR_FAILED=
-set FAILED_STEPS=
-
-echo [1/4] Collecting event logs with %COLLECTOR% ...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%BASE%\run_collector.ps1" -Base "%BASE%" -Collector "%COLLECTOR%"
-REM Exit code 2 = no errors/warnings left after exclusion, no CSV written.
-REM The next steps still run: fill_check only uses this week's CSVs and creates this week's check sheet (all O).
-REM (check 2 first: "if errorlevel N" means "exit code >= N")
-if errorlevel 2 (
-    echo No error/warning events after exclusion - no CSV written this time.
-    goto KETTLE
-)
-REM Exit code 1 = error (folder not writable, or every server failed)
-if errorlevel 1 (
-    echo.
-    echo [ERROR] Event log collection failed. Stopped before Kettle and filling the Excel files.
-    echo         See the messages above and the log folder - log_dir in config.json
-    goto END
-)
-
-:KETTLE
-echo.
-echo [2/4] Exporting monitor data with Kettle ...
-REM run_kettle.ps1 runs Kitchen and writes the Kettle log to log_dir of config.json (yyyyMMdd_kettle.log)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%BASE%\run_kettle.ps1" -Base "%BASE%" -Kitchen "%KITCHEN%" -Job "%KETTLE_JOB%"
-if errorlevel 1 goto KETTLE_FAILED
-goto MONITOR
-
-:KETTLE_FAILED
-echo [ERROR] Kettle failed - monitor_check skipped, monitor columns in the check sheet will be cleared
-set MONITOR_FAILED=1
-set FAILED_STEPS=%FAILED_STEPS% Kettle
-goto FILL
-
-:MONITOR
-echo.
-echo [3/4] Checking monitor data with monitor_check ...
-REM Use monitor_check.exe if present, otherwise run monitor_check.py with Python
-if exist "%BASE%\monitor_check.exe" (
-    "%BASE%\monitor_check.exe"
-) else (
-    python "%BASE%\monitor_check.py"
-)
-if errorlevel 1 (
-    echo [ERROR] monitor_check failed - monitor columns in the check sheet will be cleared
-    set MONITOR_FAILED=1
-    set FAILED_STEPS=%FAILED_STEPS% monitor_check
-)
-
-:FILL
-echo.
-echo [4/4] Filling check sheet and tracking sheet...
-REM fill_check reads this week's CSVs from paths.csv_dir in config.json - it must be the same folder as OutDir in the ps1
-REM When Kettle or monitor_check failed, --clear-monitor empties the monitor columns (CPU, Memory, ...)
-set FILL_ARGS=
-if defined MONITOR_FAILED set FILL_ARGS=--clear-monitor
-REM Use fill_check.exe if present, otherwise run fill_check.py with Python
-if exist "%BASE%\fill_check\fill_check.exe" (
-    "%BASE%\fill_check\fill_check.exe" %FILL_ARGS%
-) else (
-    where python >nul 2>nul
-    if errorlevel 1 (
-        echo [ERROR] %BASE%\fill_check\fill_check.exe not found and Python is not installed
-        goto END
-    )
-    python "%BASE%\fill_check.py" %FILL_ARGS%
-)
-REM fill_check exit code 3 = an Excel file stayed open by someone longer than wait_if_open allows
-if errorlevel 3 (
-    echo [ERROR] An Excel file was open by someone - not updated. Run again later, it is safe to re-run.
-) else if errorlevel 1 (
-    echo [ERROR] fill_check did not finish. See its log.
-) else (
-    echo Done.
-)
-if defined FAILED_STEPS (
-    echo.
-    echo [WARN] Failed steps:%FAILED_STEPS% - monitor columns were cleared, see the messages above
-)
-
-:END
+REM Weekly system check - double-click to run, or add to Task Scheduler.
+REM run_weekly.ps1 (same folder) does all the steps:
+REM   [1/4] collect event log CSVs  [2/4] Kettle  [3/4] monitor_check  [4/4] fill_check
+REM All settings are in config.json (same folder): paths, log_dir, eventlog, monitor, weekly
+REM   weekly.collector  = EventLogCheck.ps1 (server list, remote) or EventLogCheck_Local.ps1 (this computer)
+REM   weekly.kitchen    = Kettle Kitchen.bat
+REM   weekly.kettle_job = Kettle monitor job (.kjb)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run_weekly.ps1"
 echo.
 pause

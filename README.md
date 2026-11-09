@@ -33,8 +33,7 @@ pip install pandas openpyxl
 ```
 D:\SystemCheck\
 ├─ run_weekly.bat          ← 每週點這個
-├─ run_collector.ps1       run_weekly.bat 用來執行撈取腳本，路徑從 config.json 傳入
-├─ run_kettle.ps1          run_weekly.bat 用來執行 Kettle Job，log 寫到 log_dir
+├─ run_weekly.ps1          每週流程本體（run_weekly.bat 呼叫它；設定全部讀 config.json）
 ├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
 ├─ serverlist.txt          伺服器清單（一行一台）
 ├─ excluded_ids.txt        撈取時直接排除的事件 ID
@@ -66,7 +65,7 @@ D:\SystemCheck\
   所以不會出現在檢核表備註與追蹤表。檔案不存在就不排除。一行一個或用逗號分隔，`#` 之後是註解。
   log 會記錄載入了幾個 ID、每台排除了幾筆事件。
 
-**路徑設定（run_weekly.bat）**：bat 透過 `run_collector.ps1` 讀 `D:\SystemCheck\config.json`，用參數傳給撈取腳本，
+**路徑設定（run_weekly.bat）**：`run_weekly.ps1` 讀 `D:\SystemCheck\config.json`，用參數傳給撈取腳本，
 **不用改 ps1**：
 
 | config.json | ps1 參數 | 說明 |
@@ -130,24 +129,25 @@ powershell -ExecutionPolicy Bypass -File EventLogCheck_Local.ps1 -OutDir \\files
 CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤表加標題（例如「發生時間」「次數」），
 再於 config.json 的 `track.columns` 加上 `"發生時間": "TimeCreated", "次數": "Count"`。
 
-`run_weekly.bat` 可直接雙擊執行，依序：
+`run_weekly.bat` 可直接雙擊執行（它只呼叫同資料夾的 `run_weekly.ps1`），依序：
 
 | 步驟 | 內容 | 失敗時 |
 |---|---|---|
-| [1/4] 撈 event log | `run_collector.ps1` 讀 config.json，把路徑當參數執行 `COLLECTOR` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時把 `set COLLECTOR=` 改成 `EventLogCheck_Local.ps1`） | 讀不到 config.json 或結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
-| [2/4] Kettle | `run_kettle.ps1` 執行 `%KITCHEN% /file:%KETTLE_JOB%`，log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
+| [1/4] 撈 event log | 讀 config.json，把路徑當參數執行 `weekly.collector` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時改成 `EventLogCheck_Local.ps1`） | 讀不到 config.json 或結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
+| [2/4] Kettle | 執行 `weekly.kitchen /file:weekly.kettle_job`，log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
 | [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → **繼續填表但監控欄清空** |
 | [4/4] fill_check | 有 `fill_check\fill_check.exe` 就執行 exe，沒有就用 Python；[2]、[3] 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
 
 最後列出失敗的步驟（`[WARN] Failed steps: Kettle`），停在視窗等按任意鍵。
 
-bat 開頭的設定（依實際安裝位置修改）：
+流程的設定在 config.json 的 `weekly`（依實際安裝位置修改；bat 不用改，放在哪個資料夾就以那個資料夾為基準）：
 
-```
-set BASE=D:\SystemCheck
-set COLLECTOR=EventLogCheck.ps1
-set KITCHEN=D:\data-integration\Kitchen.bat
-set KETTLE_JOB=%BASE%\kettle\monitor.kjb
+```json
+"weekly": {
+    "collector": "EventLogCheck.ps1",
+    "kitchen": "D:/data-integration/Kitchen.bat",
+    "kettle_job": "D:/SystemCheck/kettle/monitor.kjb"
+}
 ```
 
 監控欄清空 = 範本中 CPU / Memory / … 打 O 的格子變空白、備註不寫 `[監控]`，事件檢視器欄照常填寫。
@@ -435,7 +435,7 @@ template 路徑、輸出資料夾、天數都從 `D:\SystemCheck\config.json` �
 D:\SystemCheck\config.json            共用設定
 D:\SystemCheck\kettle\read_config.ktr 讀 config.json → 設變數
 D:\SystemCheck\kettle\monitor.ktr     讀 template → 逐台撈 MySQL → 輸出 CSV
-D:\SystemCheck\kettle\monitor.kjb     Job：依序執行（run_weekly.bat 的 KETTLE_JOB）
+D:\SystemCheck\kettle\monitor.kjb     Job：依序執行（config.json 的 weekly.kettle_job）
 D:\SystemCheck\monitor\<主機>.csv     輸出（monitor.csv_dir）
 ```
 
@@ -638,7 +638,7 @@ Start → read_config.ktr → Write to log → Delete files → monitor.ktr → 
    2026-11-03 16:42,4.62,377.02
    ```
 3. 命令列：`D:\data-integration\Kitchen.bat /file:D:\SystemCheck\kettle\monitor.kjb /level:Basic`，成功時結束碼 0
-   - `run_weekly.bat` 透過 `run_kettle.ps1` 執行，Kettle 的 log（含 Write to log 的每台摘要）寫到
+   - `run_weekly.bat`（run_weekly.ps1）執行時，Kettle 的 log（含 Write to log 的每台摘要）寫到
      config.json 的 `log_dir\yyyyMMdd_kettle.log`（`log_dir` 可用 `{week}` 等，畫面會印出 `Kettle log: <路徑>`）
 4. 單獨跑 monitor.ktr 時讀不到 Job 的變數：在 Run 對話框的 **Variables** 頁手動填 TEMPLATE、MONITOR_DIR、DAYS
 
