@@ -6,10 +6,9 @@ cd /d "%~dp0"
 REM search_ignore: uses openpyxl only; exclude large unused packages for a small, fast exe
 pyinstaller --onefile --exclude-module pandas --exclude-module numpy --exclude-module PIL --exclude-module lxml search_ignore.py
 
-REM fill_check: needs pandas; --onedir avoids unpacking on every start
-REM Output is the dist\fill_check\ folder - copy the whole folder and run fill_check.exe inside it
-REM config.json goes one level up (D:\SystemCheck\config.json), shared with monitor_check and Kettle
-pyinstaller --onedir --noconfirm --exclude-module PIL --exclude-module lxml fill_check.py
+REM fill_check: needs pandas; one file dist\fill_check.exe (put it in D:\SystemCheck next to config.json)
+REM The first start unpacks to a temp folder, so it starts slower than the other tools
+pyinstaller --onefile --noconfirm --exclude-module PIL --exclude-module lxml fill_check.py
 
 REM monitor_check: standard library only; one small exe, put it next to config.json
 pyinstaller --onefile --noconfirm --exclude-module pandas --exclude-module numpy --exclude-module openpyxl --exclude-module PIL --exclude-module lxml monitor_check.py

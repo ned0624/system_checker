@@ -1,6 +1,6 @@
 # Weekly system check (run_weekly.bat runs this file):
 #   [1/4] collect event log CSVs     EventLogCheck.ps1 / EventLogCheck_Local.ps1, paths from config.json
-#   [2/4] export monitor data        Kettle job (Kitchen), log -> <log_dir>\yyyyMMdd_kettle.log
+#   [2/4] export monitor data        Kettle job (Kitchen, run from the Kettle folder), log -> <log_dir>\yyyyMMdd_kettle.log
 #   [3/4] monitor report             monitor_check
 #   [4/4] fill check sheet and tracking sheet   fill_check
 # All settings come from config.json in this folder:
@@ -45,10 +45,11 @@ function Get-IsoWeek([datetime]$d) {
 # Command for a Python tool: <exe> if present, otherwise python <name>.py; $null when neither works.
 # (The tool itself is run at script level: output of a command run inside a function would become
 #  the function's return value.)
-function Get-ToolCommand([string]$name, [string]$exe) {
-    if (Test-Path -LiteralPath $exe -PathType Leaf) { return , @($exe) }
+function Get-ToolCommand([string]$name, [string[]]$exes) {
+    $exe = $exes | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if ($exe) { return , @($exe) }
     if (Get-Command python -ErrorAction SilentlyContinue) { return , @('python', (Join-Path $Base "$name.py")) }
-    Write-Host "[ERROR] $exe not found and Python is not installed"
+    Write-Host "[ERROR] $name.exe not found ($($exes -join ', ')) and Python is not installed"
     return $null
 }
 
@@ -117,9 +118,18 @@ else {
         New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
         $kettleLog = Join-Path $logDir ((Get-Date -Format 'yyyyMMdd') + '_kettle.log')
         Write-Host "Kettle log: $kettleLog"
-        & $kitchen "/file:$kettleJob" '/level:Basic' "/logfile:$kettleLog"
-        if ($LASTEXITCODE -eq 0) { $kettleOk = $true }
-        else { Write-Host "[ERROR] Kitchen exit code $LASTEXITCODE - see $kettleLog" }
+        # Kitchen.bat / Spoon.bat use relative paths (launcher\launcher.jar, libswt\win64):
+        # run them from the Kettle folder; job and log are absolute paths
+        Push-Location -LiteralPath (Split-Path -Parent $kitchen)
+        try {
+            & $kitchen "/file:$kettleJob" '/level:Basic' "/logfile:$kettleLog"
+            $kitchenCode = $LASTEXITCODE
+        }
+        finally {
+            Pop-Location
+        }
+        if ($kitchenCode -eq 0) { $kettleOk = $true }
+        else { Write-Host "[ERROR] Kitchen exit code $kitchenCode - see $kettleLog" }
     }
     catch {
         Write-Host "[ERROR] Cannot create log folder $logDir : $($_.Exception.Message)"
@@ -134,7 +144,7 @@ if (-not $kettleOk) {
 if ($kettleOk) {
     Write-Host ""
     Write-Host "[3/4] Checking monitor data with monitor_check ..."
-    $tool = Get-ToolCommand 'monitor_check' (Join-Path $Base 'monitor_check.exe')
+    $tool = Get-ToolCommand 'monitor_check' @((Join-Path $Base 'monitor_check.exe'))
     $code = 1
     if ($tool) {
         & $tool[0] @($tool | Select-Object -Skip 1)
@@ -152,7 +162,8 @@ Write-Host "[4/4] Filling check sheet and tracking sheet..."
 # When Kettle or monitor_check failed, --clear-monitor empties the monitor columns (CPU, Memory, ...)
 $fillArgs = @()
 if ($failed.Count -gt 0) { $fillArgs += '--clear-monitor' }
-$tool = Get-ToolCommand 'fill_check' (Join-Path $Base 'fill_check\fill_check.exe')
+# fill_check.exe (onefile) next to this script; the old onedir layout fill_check\fill_check.exe still works
+$tool = Get-ToolCommand 'fill_check' @((Join-Path $Base 'fill_check.exe'), (Join-Path $Base 'fill_check\fill_check.exe'))
 $code = 1
 if ($tool) {
     & $tool[0] @(@($tool | Select-Object -Skip 1) + $fillArgs)

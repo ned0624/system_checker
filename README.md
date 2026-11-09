@@ -37,7 +37,7 @@ D:\SystemCheck\
 ├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
 ├─ serverlist.txt          伺服器清單（一行一台）
 ├─ excluded_ids.txt        撈取時直接排除的事件 ID
-├─ fill_check.py          填檢核表、貼追蹤表（或 fill_check\ 資料夾內的 exe）
+├─ fill_check.exe          填檢核表、貼追蹤表（單一檔案；沒有 exe 時用 Python 執行 fill_check.py）
 ├─ monitor_check.exe       監控數據分析報表（Kettle 匯出的 CSV）
 ├─ search_ignore.py / .exe 可忽略事件ID 搜尋
 ├─ config.json             共用設定檔（Kettle、monitor_check、fill_check）
@@ -134,9 +134,9 @@ CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤
 | 步驟 | 內容 | 失敗時 |
 |---|---|---|
 | [1/4] 撈 event log | 讀 config.json，把路徑當參數執行 `weekly.collector` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時改成 `EventLogCheck_Local.ps1`） | 讀不到 config.json 或結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
-| [2/4] Kettle | 執行 `weekly.kitchen /file:weekly.kettle_job`，log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
+| [2/4] Kettle | **切換到 Kettle 安裝資料夾**執行 `weekly.kitchen /file:weekly.kettle_job`（Kitchen.bat 用相對路徑，`weekly.kitchen` 要指向安裝資料夾裡的 Kitchen.bat，例 `D:/Kettle94/Kitchen.bat`），log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
 | [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → **繼續填表但監控欄清空** |
-| [4/4] fill_check | 有 `fill_check\fill_check.exe` 就執行 exe，沒有就用 Python；[2]、[3] 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
+| [4/4] fill_check | 有 `fill_check.exe`（同資料夾）就執行 exe，沒有就用 Python；[2]、[3] 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
 
 最後列出失敗的步驟（`[WARN] Failed steps: Kettle`），停在視窗等按任意鍵。
 
@@ -755,7 +755,7 @@ Kettle SQL 的 CTE `d` 會留下「對不到類別（`item` 為 NULL）」或「
 
 | 檔案 | 內容 |
 |---|---|
-| `SystemCheck.zip` | 解壓到 `D:\` 會得到 `D:\SystemCheck\`：`config.json`（共用）、`fill_check\`（`fill_check.exe` + `_internal\`）、`monitor_check.exe`、`search_ignore.exe`、`run_weekly.bat`、`EventLogCheck.ps1`、空的 `EventLog\`、`logs\` |
+| `SystemCheck.zip` | 解壓到 `D:\` 會得到 `D:\SystemCheck\`：`config.json`（共用）、`fill_check.exe`、`monitor_check.exe`、`search_ignore.exe`、`run_weekly.bat`、`run_weekly.ps1`、`EventLogCheck.ps1`、空的 `EventLog\`、`logs\` |
 | `search_ignore.exe` | 只要搜尋工具時單獨下載 |
 
 使用前：
@@ -776,14 +776,13 @@ build_exe.bat
 |---|---|---|---|
 | search_ignore | `--onefile`，排除 pandas/numpy/PIL/lxml | `dist\search_ignore.exe`（約 10 MB） | 單一檔案，複製到哪都能用 |
 | monitor_check | `--onefile`，排除 pandas/numpy/openpyxl/PIL/lxml | `dist\monitor_check.exe` | 單一檔案，放在 `config.json` 同一層 |
-| fill_check | `--onedir` | `dist\fill_check\` 資料夾 | 整個資料夾一起複製到 `D:\SystemCheck\fill_check\`，讀上一層的 `config.json` |
+| fill_check | `--onefile` | `dist\fill_check.exe` | 單一檔案（方便下載），放在 `D:\SystemCheck\`，讀同一層的 `config.json` |
 
-**為什麼不全部用 `--onefile`？** `--onefile` 每次啟動都要把整包程式解壓縮到暫存資料夾，
-公司防毒會逐一掃描解出來的檔案；含 pandas 的程式可能要等好幾分鐘才出現第一行文字。
-`--onedir` 不用解壓縮，啟動快很多。
+**fill_check 用 `--onefile` 的代價**：每次啟動都要把整包程式（含 pandas）解壓縮到暫存資料夾，
+公司防毒會逐一掃描解出來的檔案，可能要等一陣子才出現第一行文字。
 
 啟動仍然很慢時：
 - exe 放在網路磁碟（例如 P:）會更慢，請複製到本機（例如 D:\SystemCheck）執行
-- 請 IT 把 exe 所在資料夾加入防毒的排除清單
+- 請 IT 把 exe 所在資料夾與暫存資料夾（`%TEMP%`）加入防毒的排除清單
 
-`run_weekly.bat` 會先找 `D:\SystemCheck\fill_check\fill_check.exe`（把 `dist\fill_check\` 整個資料夾複製到 `D:\SystemCheck\fill_check\`），找不到才用 Python 執行 `fill_check.py`。
+`run_weekly.bat` 會先找 `D:\SystemCheck\fill_check.exe`（舊版的 `fill_check\fill_check.exe` 也可以），找不到才用 Python 執行 `fill_check.py`。

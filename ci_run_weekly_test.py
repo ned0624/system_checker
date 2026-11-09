@@ -24,7 +24,7 @@ def scenario(name, collector=0, kitchen=0, monitor=0, config=True):
     shutil.copy("run_weekly.ps1", base)
     if config:   # log_dir 相對路徑 + {week} → <base>\W2645\logs；路徑從 config.json 傳給撈取腳本
         json.dump({"log_dir": "{week}/logs",
-                   "weekly": {"collector": "EventLogCheck.ps1", "kitchen": "Kitchen.bat",
+                   "weekly": {"collector": "EventLogCheck.ps1", "kitchen": "kettle_home/Kitchen.bat",
                               "kettle_job": "kettle/monitor.kjb"},
                    "paths": {"csv_dir": "//fileserver/中文資料夾/{week}/BOS"},
                    "eventlog": {"server_list": "serverlist.txt", "exclude_file": "D:/SystemCheck/excluded_ids.txt",
@@ -38,8 +38,9 @@ def scenario(name, collector=0, kitchen=0, monitor=0, config=True):
         f'[IO.File]::WriteAllText("{base}\\collector_args.json", ($PSBoundParameters | ConvertTo-Json), '
         "(New-Object Text.UTF8Encoding($false)))\n"
         f"exit {collector}\n")
-    open(os.path.join(base, "Kitchen.bat"), "w", newline="\r\n").write(
-        f'@echo off\necho kitchen %*>>"{log}"\nexit /b {kitchen}\n')
+    os.makedirs(os.path.join(base, "kettle_home"))   # Kitchen 要在自己的資料夾執行（相對路徑 launcher\...）
+    open(os.path.join(base, "kettle_home", "Kitchen.bat"), "w", newline="\r\n").write(
+        f'@echo off\necho kitchen %*>>"{log}"\necho %CD%>"{base}\\kitchen_cwd.txt"\nexit /b {kitchen}\n')
     open(os.path.join(base, "kettle", "monitor.kjb"), "w").write("<job/>")
     stub = 'import sys\nopen(r"{log}", "a").write("{name} " + " ".join(sys.argv[1:]) + "\\n")\nsys.exit({code})\n'
     open(os.path.join(base, "monitor_check.py"), "w").write(stub.format(log=log, name="monitor", code=monitor))
@@ -67,6 +68,8 @@ kettle_log = os.path.join(log_dir, f"{date.today():%Y%m%d}_kettle.log")
 assert f"/logfile:{kettle_log}" in calls[1], (calls[1], kettle_log)   # Kettle log → config.json 的 log_dir
 assert os.path.isdir(log_dir), "log_dir not created"
 assert "Kettle log: " + kettle_log in out, out
+cwd = open(os.path.join(tmp, "all_ok", "kitchen_cwd.txt")).read().strip()
+assert os.path.normcase(cwd) == os.path.normcase(os.path.join(tmp, "all_ok", "kettle_home")), cwd
 assert calls[3] == "fill", calls
 assert "Failed steps" not in out and "Done." in out, out
 
