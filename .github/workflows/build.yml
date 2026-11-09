@@ -65,12 +65,12 @@ jobs:
       - name: ps1 must be pure ASCII (PowerShell 5.1 reads BOM-less files as ANSI)
         shell: bash
         run: |
-          if grep -nP '[^\x00-\x7F]' EventLogCheck*.ps1; then echo "non-ASCII characters found in ps1"; exit 1; fi
+          if grep -nP '[^\x00-\x7F]' EventLogCheck*.ps1 run_kettle.ps1; then echo "non-ASCII characters found in ps1"; exit 1; fi
 
       - name: Syntax check
         shell: powershell
         run: |
-          foreach ($f in 'EventLogCheck.ps1', 'EventLogCheck_Local.ps1') {
+          foreach ($f in 'EventLogCheck.ps1', 'EventLogCheck_Local.ps1', 'run_kettle.ps1') {
             $errs = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errs) | Out-Null
             if ($errs) { $errs | ForEach-Object { Write-Output "$f : $_" }; throw "syntax error in $f" }
@@ -244,7 +244,7 @@ jobs:
           Copy-Item -Recurse dist\fill_check "$out\fill_check"
           # 共用設定檔放在根目錄：Kettle、monitor_check、fill_check 都讀 SystemCheck\config.json
           Copy-Item config.json, dist\monitor_check.exe $out
-          Copy-Item dist\search_ignore.exe, run_weekly.bat, EventLogCheck.ps1, EventLogCheck_Local.ps1, excluded_ids.txt, README.md $out
+          Copy-Item dist\search_ignore.exe, run_weekly.bat, run_kettle.ps1, EventLogCheck.ps1, EventLogCheck_Local.ps1, excluded_ids.txt, README.md $out
           Compress-Archive -Path $out -DestinationPath SystemCheck.zip
           Copy-Item dist\search_ignore.exe search_ignore.exe
 

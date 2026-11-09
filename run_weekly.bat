@@ -14,6 +14,7 @@ REM Folders (CSV output, log, server list, exclude list) are set in the SETTINGS
 set COLLECTOR=EventLogCheck.ps1
 
 REM Kettle (Pentaho Data Integration): Kitchen.bat and the monitor job (read_config.ktr + monitor.ktr)
+REM The Kettle log goes to log_dir of config.json: <log_dir>\yyyyMMdd_kettle.log
 set KITCHEN=D:\data-integration\Kitchen.bat
 set KETTLE_JOB=%BASE%\kettle\monitor.kjb
 
@@ -40,15 +41,8 @@ if errorlevel 1 (
 :KETTLE
 echo.
 echo [2/4] Exporting monitor data with Kettle ...
-if not exist "%KITCHEN%" (
-    echo [ERROR] Kettle not found: %KITCHEN% - set KITCHEN in run_weekly.bat
-    goto KETTLE_FAILED
-)
-if not exist "%KETTLE_JOB%" (
-    echo [ERROR] Kettle job not found: %KETTLE_JOB% - set KETTLE_JOB in run_weekly.bat
-    goto KETTLE_FAILED
-)
-call "%KITCHEN%" /file:"%KETTLE_JOB%" /level:Basic
+REM run_kettle.ps1 runs Kitchen and writes the Kettle log to log_dir of config.json (yyyyMMdd_kettle.log)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%BASE%\run_kettle.ps1" -Base "%BASE%" -Kitchen "%KITCHEN%" -Job "%KETTLE_JOB%"
 if errorlevel 1 goto KETTLE_FAILED
 goto MONITOR
 
