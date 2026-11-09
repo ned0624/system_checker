@@ -33,6 +33,7 @@ pip install pandas openpyxl
 ```
 D:\SystemCheck\
 ├─ run_weekly.bat          ← 每週點這個
+├─ run_kettle.ps1          run_weekly.bat 用來執行 Kettle Job，log 寫到 log_dir
 ├─ EventLogCheck.ps1       撈事件檢視器 → EventLog\日期_伺服器名.csv
 ├─ serverlist.txt          伺服器清單（一行一台）
 ├─ excluded_ids.txt        撈取時直接排除的事件 ID
@@ -109,7 +110,7 @@ CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤
 | 步驟 | 內容 | 失敗時 |
 |---|---|---|
 | [1/4] 撈 event log | `COLLECTOR` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時把 `set COLLECTOR=` 改成 `EventLogCheck_Local.ps1`） | 結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
-| [2/4] Kettle | `call %KITCHEN% /file:%KETTLE_JOB%`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
+| [2/4] Kettle | `run_kettle.ps1` 執行 `%KITCHEN% /file:%KETTLE_JOB%`，log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
 | [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → **繼續填表但監控欄清空** |
 | [4/4] fill_check | 有 `fill_check\fill_check.exe` 就執行 exe，沒有就用 Python；[2]、[3] 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
 
@@ -612,6 +613,8 @@ Start → read_config.ktr → Write to log → Delete files → monitor.ktr → 
    2026-11-03 16:42,4.62,377.02
    ```
 3. 命令列：`D:\data-integration\Kitchen.bat /file:D:\SystemCheck\kettle\monitor.kjb /level:Basic`，成功時結束碼 0
+   - `run_weekly.bat` 透過 `run_kettle.ps1` 執行，Kettle 的 log（含 Write to log 的每台摘要）寫到
+     config.json 的 `log_dir\yyyyMMdd_kettle.log`（`log_dir` 可用 `{week}` 等，畫面會印出 `Kettle log: <路徑>`）
 4. 單獨跑 monitor.ktr 時讀不到 Job 的變數：在 Run 對話框的 **Variables** 頁手動填 TEMPLATE、MONITOR_DIR、DAYS
 
 #### 常見錯誤
