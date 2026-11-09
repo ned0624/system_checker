@@ -449,8 +449,13 @@ JSON input → Set Variables
 #### 2. monitor.ktr
 
 ```
-Microsoft Excel input → Filter rows → Select values → Table input → Text file output
+Microsoft Excel input → Filter rows → Select values → Table input ──(Copy)──> Text file output
+                                                                  └─(Copy)──> Filter rows 2 → Memory group by → Write to log
 ```
+
+> Table input 拉第二條連線時 Spoon 會問 Distribute / Copy，**一定要選 Copy**；
+> 選 Distribute 會把資料輪流分給兩條線，CSV 只剩一半資料而且不會報錯
+> （之後可在 Table input 按右鍵 → Data movement → Copy data to next steps 確認）。
 
 **Microsoft Excel input**
 - Files 頁：File or directory 填 `${TEMPLATE}`，**按 Add**
@@ -558,6 +563,29 @@ order by sort_key, time_min
 - Content 頁：Separator `,`、**Enclosure 清空**、**Header 不勾**、不勾 Force enclosure、Encoding `UTF-8`
 - Fields 頁：**只留 `line`**
 
+**寫 log（Table input 的第二條線）**：每台主機寫一行摘要，不會把上萬筆分鐘資料都印進 log
+- **Filter rows 2**：條件 `sort_key = 2`（只留數據列，排除標題與 upper_spec 列），true → Memory group by
+- **Memory group by**（Statistics 分類，不用先排序）：Group field `filename`；Aggregates：
+
+  | Name | Subject | Type |
+  |---|---|---|
+  | data_rows | time_min | Number of Values (N) |
+  | first_time | time_min | Minimum |
+  | last_time | time_min | Maximum |
+
+- **Write to log**（Utility 分類）：Log level `Basic`（Kitchen `/level:Basic` 也會印）、Write to log 填 `Monitor CSV written`、
+  Fields 頁加入 `filename`、`data_rows`、`first_time`、`last_time`
+- log 範例（7 天每分鐘約 10080 列，明顯偏少代表有缺資料）：
+  ```
+  Monitor CSV written
+  filename = D:/SystemCheck/monitor/P3-WFA-AP01V.csv
+  data_rows = 10080
+  first_time = 2026-11-02 11:23
+  last_time = 2026-11-09 11:22
+  ```
+- 選用：Select values 也用 Copy 拉一條到另一個 Write to log（Fields 放 `Host Name`），
+  log 會先列出所有查詢的主機，和上面的摘要比對就知道哪幾台沒產生檔案
+
 #### 3. monitor.kjb（Job）
 
 ```
@@ -594,6 +622,7 @@ Start → read_config.ktr → Write to log → Delete files → monitor.ktr → 
 | Excel input 找不到 `${TEMPLATE}` | 單獨跑 monitor.ktr，或 Set Variables 的 scope 不是 root job |
 | SQL syntax error near '$' | Table input 沒勾 Replace variables in script |
 | Unable to find rowset to read from | Insert data from step 沒選直接上游 Select values |
+| CSV 只有一半左右的資料 | Table input 的兩條線選成 Distribute；右鍵 Table input → Data movement → Copy data to next steps |
 | Set Variables：more than one row | JSON 路徑寫錯，對到多個值 |
 | Client does not support authentication protocol | JDBC 太舊，換 `mysql-connector-j-9.x` 放 `data-integration/lib/` |
 | Expression #N ... not in GROUP BY | group by 漏了 `p.*` 欄位；分鐘要用 CTE 算好的 `d.tm` |
