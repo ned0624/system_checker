@@ -3,7 +3,6 @@
 Usage: python ci_period_check.py <csv folder> "<start yyyy-MM-dd HH:mm>" "<end yyyy-MM-dd HH:mm>"
 """
 import glob
-import re
 import os
 import sys
 from datetime import datetime
@@ -14,7 +13,7 @@ folder, start, end = sys.argv[1], *(datetime.strptime(s, "%Y-%m-%d %H:%M") for s
 files = glob.glob(os.path.join(folder, "*.csv"))
 print("CSV:", [os.path.basename(f) for f in files])
 for f in files:
-    assert not re.match(r"\d{8}_", os.path.basename(f)), f"CSV name must be <server>.csv (no date): {f}"
+    assert os.path.basename(f).startswith(end.strftime("%Y%m%d") + "_"), f"file date must be the end date: {f}"
     df = pd.read_csv(f, dtype=str, encoding="utf-8-sig")
     times = pd.to_datetime(df["TimeCreated"])
     print(f"{os.path.basename(f)}: {len(df)} rows, {times.min()} .. {times.max()}")

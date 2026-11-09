@@ -120,17 +120,12 @@ jobs:
           python ci_settings_test.py check "$env:RUNNER_TEMP\st" "$env:COMPUTERNAME"
           if ($LASTEXITCODE -ne 0) { throw "settings check failed" }
 
-      - name: No events left gives exit 2, no CSV, and removes the old CSV (period in 2000)
+      - name: No events left gives exit 2 and no CSV (period in 2000)
         shell: powershell
         run: |
-          # 上次留下的 <電腦名稱>.csv / localhost.csv：這次沒有事件 → 要被刪掉，fill_check 才不會用到舊資料
-          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\ev0" | Out-Null
-          Set-Content "$env:RUNNER_TEMP\ev0\$env:COMPUTERNAME.csv" "old"
-          Set-Content "$env:RUNNER_TEMP\ev0\localhost.csv" "old"
           $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck_Local.ps1 -StartTime 2000-01-01 -EndTime 2000-01-02 -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
           Write-Output $out
           if ($LASTEXITCODE -ne 2 -or $out -notmatch 'no CSV written') { throw "local no-events: expected exit 2, got $LASTEXITCODE" }
-          if ($out -notmatch 'removed old CSV') { throw "old CSV not reported as removed" }
           Set-Content "$env:RUNNER_TEMP\lh.txt" "localhost"
           $out = powershell -NoProfile -ExecutionPolicy Bypass -File .\EventLogCheck.ps1 -StartTime 2000-01-01 -EndTime 2000-01-02 -ServerList "$env:RUNNER_TEMP\lh.txt" -OutDir "$env:RUNNER_TEMP\ev0" -LogDir "$env:RUNNER_TEMP\logs0" -ExcludeFile "$env:RUNNER_TEMP\none.txt" 2>&1 | Out-String
           Write-Output $out
