@@ -147,7 +147,7 @@ for m in ("cpu", "swap", "disk3"):
     assert z["result"] == "OK" and z["max"] == "0.00", z
 d = rep["HOST-D", "memory"]
 assert d["over_count"] == "1" and d["longest_over_min"] == "1" and d["rising"] == "-" and d["result"] == "OK", d
-log = open(glob.glob(os.path.join(tmp, "logs", "*_monitor_check.log"))[0], encoding="utf-8-sig").read()
+log = open(glob.glob(os.path.join(tmp, "logs", "*.log"))[0], encoding="utf-8-sig").read()
 assert "[WARN] HOST-E: 120 rows, no values in any column" in log, log
 assert "HOST-Z: " + str(4 * DAY) + " rows" in log and "[WARN] HOST-Z" not in log, log
 assert "[WARN] HOST-C" in log and "[RISING] HOST-A memory" in log and "[OVER SPEC] HOST-A cpu" in log, log

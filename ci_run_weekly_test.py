@@ -40,7 +40,9 @@ def scenario(name, collector=0, kitchen=0, monitor=0, config=True):
         f"exit {collector}\n")
     os.makedirs(os.path.join(base, "kettle_home"))   # Kitchen 要在自己的資料夾執行（相對路徑 launcher\...）
     open(os.path.join(base, "kettle_home", "Kitchen.bat"), "w", newline="\r\n").write(
-        f'@echo off\necho kitchen %*>>"{log}"\necho %CD%>"{base}\\kitchen_cwd.txt"\nexit /b {kitchen}\n')
+        f'@echo off\necho kitchen %*>>"{log}"\necho %CD%>"{base}\\kitchen_cwd.txt"\n'
+        'set L=%~3\necho kettle-stub-line>"%L:~9%"\n'          # 寫進 /logfile: 指定的檔案
+        f'exit /b {kitchen}\n')
     open(os.path.join(base, "kettle", "monitor.kjb"), "w").write("<job/>")
     stub = 'import sys\nopen(r"{log}", "a").write("{name} " + " ".join(sys.argv[1:]) + "\\n")\nsys.exit({code})\n'
     open(os.path.join(base, "monitor_check.py"), "w").write(stub.format(log=log, name="monitor", code=monitor))
@@ -64,10 +66,14 @@ assert args == {"OutDir": r"\\fileserver\中文資料夾\{week}\BOS",           
                 "Days": "7"}, args                                            # 空的 start_time / end_time 不傳
 y, w, _ = date.today().isocalendar()
 log_dir = os.path.join(tmp, "all_ok", f"W{y % 100:02d}{w:02d}", "logs")
-kettle_log = os.path.join(log_dir, f"{date.today():%Y%m%d}_kettle.log")
-assert f"/logfile:{kettle_log}" in calls[1], (calls[1], kettle_log)   # Kettle log → config.json 的 log_dir
-assert os.path.isdir(log_dir), "log_dir not created"
-assert "Kettle log: " + kettle_log in out, out
+day_log = os.path.join(log_dir, f"{date.today():%Y%m%d}.log")   # 全部寫在同一個每日 log
+assert os.path.isfile(day_log), "day log not created"
+text = open(day_log, encoding="utf-8-sig").read()
+for s_ in ("===== run_weekly start", "[1/4] Collecting", "[2/4] Exporting", "----- Kettle log -----",
+           "kettle-stub-line", "----- end of Kettle log -----", "[4/4] Filling", "Done."):
+    assert s_ in text, (s_, text)
+tmp_log = calls[1].split("/logfile:")[1].strip()
+assert not os.path.exists(tmp_log), "Kettle temp log not removed"
 cwd = open(os.path.join(tmp, "all_ok", "kitchen_cwd.txt")).read().strip()
 assert os.path.normcase(cwd) == os.path.normcase(os.path.join(tmp, "all_ok", "kettle_home")), cwd
 assert calls[3] == "fill", calls

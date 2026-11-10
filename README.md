@@ -134,11 +134,16 @@ CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤
 | 步驟 | 內容 | 失敗時 |
 |---|---|---|
 | [1/4] 撈 event log | 讀 config.json，把路徑當參數執行 `weekly.collector` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時改成 `EventLogCheck_Local.ps1`） | 讀不到 config.json 或結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
-| [2/4] Kettle | **切換到 Kettle 安裝資料夾**執行 `weekly.kitchen /file:weekly.kettle_job`（Kitchen.bat 用相對路徑，`weekly.kitchen` 要指向安裝資料夾裡的 Kitchen.bat，例 `D:/Kettle94/Kitchen.bat`），log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
+| [2/4] Kettle | **切換到 Kettle 安裝資料夾**執行 `weekly.kitchen /file:weekly.kettle_job`（Kitchen.bat 用相對路徑，`weekly.kitchen` 要指向安裝資料夾裡的 Kitchen.bat，例 `D:/Kettle94/Kitchen.bat`），Kettle 的 log 附加到每日 log `log_dir\yyyyMMdd.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
 | [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → 只顯示警告（含結束碼），**監控欄照常填**：fill_check 自己讀 Kettle CSV 判斷，報表只是明細 |
 | [4/4] fill_check | 有 `fill_check.exe`（同資料夾）就執行 exe，沒有就用 Python；[2] Kettle 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
 
 最後列出失敗的步驟（`[WARN] Failed steps: Kettle`），停在視窗等按任意鍵。
+
+**log 全部在同一個檔案**：config.json 的 `log_dir\yyyyMMdd.log`（例 `20261110.log`），依序包含
+run_weekly 的步驟訊息、EventLogCheck.ps1、Kettle（Kitchen 的完整 log）、monitor_check、fill_check；
+同一天跑多次就接在後面，每次以 `===== run_weekly start ... =====` 開頭。
+（EventLogCheck_Local.ps1 單獨在伺服器上跑時照舊寫 `日期_電腦名稱.log`）
 
 流程的設定在 config.json 的 `weekly`（依實際安裝位置修改；bat 不用改，放在哪個資料夾就以那個資料夾為基準）：
 
@@ -410,7 +415,7 @@ log 寫到頂層的 `log_dir`。路徑可用 `{week}` / `{yyyy}` / `{yy}` / `{ww
   | rising | Y = 持續上升、N = 沒有、`-` = 資料不足 |
   | hours_to_spec | 持續上升時，照目前速度約幾小時到 spec |
   - `result`：`OK` / `OVER SPEC` / `RISING` / `OVER SPEC+RISING` / `NO DATA`
-- 畫面與 log `log_dir\yyyyMMdd_monitor_check.log`：每台一行摘要，最後列出所有超標與持續上升的項目
+- 畫面與 log `log_dir\yyyyMMdd.log`（和其他程式共用的每日 log）：每台一行摘要，最後列出所有超標與持續上升的項目
 - 結束碼：0 = 完成（不論有沒有發現問題），1 = 錯誤（設定檔、CSV 資料夾、報表或 log 寫不進去）
 
 ### 執行
@@ -639,7 +644,7 @@ Start → read_config.ktr → Write to log → Delete files → monitor.ktr → 
    ```
 3. 命令列：`D:\data-integration\Kitchen.bat /file:D:\SystemCheck\kettle\monitor.kjb /level:Basic`，成功時結束碼 0
    - `run_weekly.bat`（run_weekly.ps1）執行時，Kettle 的 log（含 Write to log 的每台摘要）寫到
-     config.json 的 `log_dir\yyyyMMdd_kettle.log`（`log_dir` 可用 `{week}` 等，畫面會印出 `Kettle log: <路徑>`）
+     config.json 的每日 log `log_dir\yyyyMMdd.log`，夾在 `----- Kettle log -----` 與 `----- end of Kettle log -----` 之間
 4. 單獨跑 monitor.ktr 時讀不到 Job 的變數：在 Run 對話框的 **Variables** 頁手動填 TEMPLATE、MONITOR_DIR、DAYS
 
 #### 常見錯誤

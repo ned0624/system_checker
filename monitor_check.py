@@ -23,7 +23,7 @@ fill_check 也 import 本程式（analyze_folder / note_text），把結果填�
 
 輸出:
     report_dir/yyyyMMdd_monitor_report.csv   一台主機一個指標一列（UTF-8 BOM，Excel 可直接開）
-    log_dir/yyyyMMdd_monitor_check.log       畫面訊息（同一天多次執行附加在同一檔）
+    log_dir/yyyyMMdd.log                     畫面訊息（和撈取腳本、Kettle、fill_check 共用同一個每日 log，附加在後面）
 
 用法:
     monitor_check.exe [csv資料夾]          （有給參數會取代設定檔的 csv_dir）
@@ -408,7 +408,7 @@ def run():
         sys.exit(1)
     base = os.path.dirname(config_path)
     log_dir = resolve(base, cfg.get("log_dir") or "logs", week)
-    log_path = os.path.join(log_dir, f"{datetime.now():%Y%m%d}_monitor_check.log")
+    log_path = os.path.join(log_dir, f"{datetime.now():%Y%m%d}.log")   # 與其他程式共用的每日 log
     try:
         os.makedirs(log_dir, exist_ok=True)
         enc = "utf-8" if os.path.exists(log_path) else "utf-8-sig"
