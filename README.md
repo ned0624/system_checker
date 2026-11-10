@@ -366,7 +366,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 
 | 項目 | 判定 |
 |---|---|
-| 超過 spec | 數值 > `upper_spec`；記錄超標分鐘數、首次/最後時間、最長連續分鐘數、最大值與時間。spec 空白則不檢查 |
+| 超過 spec | 數值 > `upper_spec` 且**連續 ≥ 5 分鐘**（`x_over_minutes`）才算 `OVER SPEC`；超標分鐘數、首次/最後時間、最長連續分鐘數、最大值與時間都會記錄（較短的超標也記）。spec 空白則不檢查 |
 | 持續上升沒降下來 | 每天取平均（從最後一筆往回每 24 小時一段，最舊不完整的一天捨棄），一週升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%，**而且最後沒有降下來**：最後 60 分鐘平均 − 最前 60 分鐘平均（`edge_minutes`）也要 ≥ spec 的 5%，否則不算持續上升（例：spec 4.8，開始 60 分鐘平均 3.6、最後 60 分鐘平均 3.7，差 0.1 < 0.24 → 已降下來）。報表的 `rise` 就是這個頭尾平均差。日夜起伏、上下跳動的不會誤判；判定上升時估算照目前速度約幾小時（天）後達 spec。不足 3 天的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一天平均為基準 |
 
 設定在共用 `config.json` 的 `monitor` 段（Kettle、monitor_check、fill_check 都讀這段）：
@@ -387,7 +387,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 監控 CSV 的**固定資料夾**（例: `D:/SystemCheck/monitor`），Kettle 每次先清空再覆蓋 |
 | `days` | Kettle | 撈最近幾天（SQL 的 `interval ${DAYS} day`） |
 | `report_dir` | monitor_check | 報表輸出資料夾（建議和 `paths.csv_dir`、`monitor.csv_dir` 分開；放在一起時 `*_monitor_report.csv` 會被略過） |
-| `x_over_minutes` | fill_check | 連續超過 spec 幾分鐘以上才在檢核表填 X（預設 5）；報表的 `OVER SPEC` 仍列出所有超標 |
+| `x_over_minutes` | monitor_check、fill_check | 連續超過 spec 幾分鐘以上才算 `OVER SPEC`、在檢核表填 X（預設 5）；較短的超標仍記在報表的 `over_count` / `longest_over_min` 與備註 |
 | `columns` | fill_check | 檢核表 / template 的監控欄標題 → CSV 欄位 |
 | `trend` | monitor_check、fill_check | 持續上升門檻，null = 預設 `{"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1, "edge_minutes": 60}` |
 

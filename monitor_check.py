@@ -13,7 +13,8 @@ CSV 格式（檔名 = 主機名稱，例: D:/SystemCheck/2026-W45/P3-WFA-AP01V.c
     - 每一欄都沒有數值（只有時間）的主機顯示 [WARN]，通常是 Kettle SQL 的 monitor_item 對不到
 
 檢查項目（每台主機、每個指標）:
-1. 超過 spec：數值 > upper_spec 的筆數、首次/最後時間、最長連續分鐘數、最大值
+1. 超過 spec：數值 > upper_spec 的筆數、首次/最後時間、最長連續分鐘數、最大值；
+   連續超過 ≥ monitor.x_over_minutes 分鐘（預設 5）才算 OVER SPEC
 2. 持續上升沒降下來：每天（trend.bucket_minutes）取平均（從最後一筆往回切，最舊不完整的一天捨棄），
    整段升幅 ≥ spec × min_rise_pct_of_spec%，且過程中從最高點回落 ≤ spec × max_drop_pct_of_spec%，
    而且最後沒有降下來：最後 edge_minutes 分鐘平均 − 最前 edge_minutes 分鐘平均（預設 60）也要 ≥ spec × min_rise_pct_of_spec%
@@ -56,6 +57,7 @@ TIME_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/
 REPORT_HEADER = ["host", "result", "metric", "spec", "max", "max_time", "over_count", "over_first", "over_last",
                  "longest_over_min", "rise", "rising", "hours_to_spec"]
 # 持續上升判定預設：每天平均（Kettle 撈 7 天），至少 3 天才判定；fill_check 也用這組
+X_OVER_MINUTES = 5  # 連續超過 spec 幾分鐘以上才算 OVER SPEC（config.json 的 monitor.x_over_minutes，fill_check 填 X 也用這個）
 DEFAULT_TREND = {"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1,
                  "edge_minutes": 60}
 
@@ -98,7 +100,8 @@ def load_settings():
             if cfg.get("monitor"):
                 mon = cfg["monitor"]
                 return path, {"csv_dir": mon.get("csv_dir"), "report_dir": mon.get("report_dir"),
-                              "log_dir": cfg.get("log_dir"), "trend": mon.get("trend")}, None
+                              "log_dir": cfg.get("log_dir"), "trend": mon.get("trend"),
+                              "x_over_minutes": mon.get("x_over_minutes")}, None
     legacy = os.path.join(APP_DIR, LEGACY_CONFIG)
     if os.path.isfile(legacy):
         with open(legacy, encoding="utf-8-sig") as f:
@@ -236,7 +239,7 @@ def check_trend(points, spec, cfg):
     return res
 
 
-def analyze(host, metrics, spec, data, trend_cfg):
+def analyze(host, metrics, spec, data, trend_cfg, x_minutes=X_OVER_MINUTES):
     """一台主機 → 每個指標一列結果"""
     out = []
     for m in metrics:
@@ -250,7 +253,9 @@ def analyze(host, metrics, spec, data, trend_cfg):
         row.update(max=v_max, max_time=t_max)
         row.update(check_over(points, row["spec"]))
         row.update(check_trend(points, row["spec"], trend_cfg))
-        flags = [f for f, hit in (("OVER SPEC", row["over_count"]), ("RISING", row["rising"] == "Y")) if hit]
+        # OVER SPEC：超過 spec 且連續 ≥ x_minutes 分鐘；較短的超標仍記在 over_count / longest_over_min
+        over = row["longest_over_min"] >= x_minutes
+        flags = [f for f, hit in (("OVER SPEC", over), ("RISING", row["rising"] == "Y")) if hit]
         row["result"] = "+".join(flags) or "OK"
         out.append(row)
     return out
@@ -289,7 +294,7 @@ def trend_config(cfg_trend):
     return trend
 
 
-def analyze_folder(csv_dir, trend):
+def analyze_folder(csv_dir, trend, x_minutes=X_OVER_MINUTES):
     """資料夾內每台主機 → {HOST: dict(rows=每個指標的結果, n, first, last, skipped) 或 dict(error=說明)}
     只有時間沒有數值的主機 rows 全是 NO DATA，另外帶 error=NO_VALUES"""
     hosts = {}
@@ -302,7 +307,7 @@ def analyze_folder(csv_dir, trend):
         except Exception as e:
             hosts[host] = {"error": f"cannot read {p}: {e}", "rows": []}
             continue
-        res = analyze(host, metrics, spec, data, trend)
+        res = analyze(host, metrics, spec, data, trend, x_minutes)
         hosts[host] = {"rows": res, "n": len(data), "first": data[0][0], "last": data[-1][0], "skipped": skipped}
         if all(r["result"] == "NO DATA" for r in res):
             hosts[host]["error"] = NO_VALUES  # 通常是 Kettle SQL 的 monitor_item 對不到
@@ -332,7 +337,7 @@ def main(cfg, base, week, csv_dir):
     if not os.path.isdir(csv_dir):
         print(f"[ERROR] CSV folder not found: {csv_dir} (check monitor.csv_dir in config.json)")
         return 1
-    hosts = analyze_folder(csv_dir, trend)
+    hosts = analyze_folder(csv_dir, trend, int(cfg.get("x_over_minutes") or X_OVER_MINUTES))
     files = len(hosts)
     print(f"CSV folder : {csv_dir} ({files} files)")
     rows, findings, warns = [], [], []

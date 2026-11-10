@@ -455,7 +455,7 @@ def plan_monitor(week, marks, problems):
         print(f"\n[WARN] Monitor CSV folder not found: {csv_dir} - monitor columns cleared")
         problems.append(("monitor", f"WARN: monitor CSV folder not found ({csv_dir}), monitor columns cleared"))
         return clear_monitor(marks)
-    hosts = mc.analyze_folder(csv_dir, mc.trend_config(MONITOR_TREND))
+    hosts = mc.analyze_folder(csv_dir, mc.trend_config(MONITOR_TREND), MONITOR_X_MINUTES)
     print(f"\nMonitor CSV folder: {csv_dir} ({len(hosts)} files)")
     for host, h in hosts.items():
         if h.get("error"):

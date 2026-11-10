@@ -91,7 +91,10 @@ write("host-i.csv", "4.80", rows, columns="time_min,memory")
 rows = [(15 + 0.0005 * i + 0.1 * math.sin(i / 7),) for i in range(N - 1)] + [(15 + 0.0005 * N - 0.3,)]
 write("host-j.csv", "25.60", rows, columns="time_min,memory")
 
-# HOST-D: 只有 3 小時 → 不判定上升，超標照算
+# HOST-L: cpu 剛好連續超標 5 分鐘 → OVER SPEC（≥ 5 分鐘）
+write("host-l.csv", "60.00", [(70.0 if 30 <= i < 35 else 20.0,) for i in range(180)], columns="time_min,cpu")
+
+# HOST-D: 只有 3 小時 → 不判定上升；只超標 1 分鐘（< 5 分鐘）→ 不算 OVER SPEC，但 over_count 照記
 rows = [(10.0, 30.0 if i == 10 else 20.0, 30.0, 300.0, 500.0) for i in range(180)]
 write("host-d.csv", "60.00,25.60,40.00,420.00,625.00", rows)
 
@@ -135,8 +138,9 @@ assert rep["HOST-G", "cpu"]["rising"] == "N" and rep["HOST-G", "cpu"]["result"] 
 assert rep["HOST-B", "cpu"]["spec"] == "" and rep["HOST-B", "cpu"]["over_count"] == "0", rep["HOST-B", "cpu"]
 assert not any(h == "HOST-C" for h, _ in rep), "broken file should not be in report"
 assert not any("MONITOR_REPORT" in h for h, _ in rep), "own report read as a host"
+assert rep["HOST-L", "cpu"]["result"] == "OVER SPEC" and rep["HOST-L", "cpu"]["longest_over_min"] == "5", rep["HOST-L", "cpu"]
 d = rep["HOST-D", "memory"]
-assert d["over_count"] == "1" and d["rising"] == "-" and d["result"] == "OVER SPEC", d
+assert d["over_count"] == "1" and d["longest_over_min"] == "1" and d["rising"] == "-" and d["result"] == "OK", d
 log = open(glob.glob(os.path.join(tmp, "logs", "*_monitor_check.log"))[0], encoding="utf-8-sig").read()
 assert "[WARN] HOST-E: 120 rows, no values in any column" in log, log
 assert "[WARN] HOST-C" in log and "[RISING] HOST-A memory" in log and "[OVER SPEC] HOST-A cpu" in log, log
