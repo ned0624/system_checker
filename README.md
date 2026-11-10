@@ -523,7 +523,7 @@ d as (
            case
              when t.monitor_item = 'CPU Usage'    then 'cpu'
              when t.monitor_item = 'Memory Usage' then 'mem'
-             when t.monitor_item = 'SWAP'         then 'swap'
+             when t.monitor_item = 'Swap Usage'   then 'swap'
              when t.monitor_item in ('C:Disk Usage', '/Disk Usage') then 'd1'
              when t.monitor_item in ('D:Disk Usage', '/oradata Disk Usage', '/ap01 Disk Usage',
                                      '/db01 Disk Usage', '/dis Disk Usage', '/apex Disk Usage') then 'd2'
