@@ -127,9 +127,10 @@ if MODE == "monitor":
     kettle_csv("SRV-A", "time_min,cpu,memory,disk2", "60.00,25.60,420.00",
                [(75.0 if 3000 <= i < 3030 else 20 + 10 * math.sin(2 * math.pi * i / DAY), 15 + 0.0006 * i, 300.0)
                 for i in range(7 * DAY)])
-    # SRV-B: cpu 超標但最長只連續 4 分鐘（不到 5 分鐘）→ O + 備註；memory 打 O 但沒有數值 → 空白 + 備註
+    # SRV-B: cpu 超標但最長只連續 4 分鐘（不到 5 分鐘）→ O + 備註，其餘時間是 0（0 也算有資料）；
+    #        memory 打 O 但沒有數值 → 空白 + 備註
     kettle_csv("SRV-B", "time_min,cpu,memory", "60.00,25.60",
-               [(75.0 if 100 <= i < 104 or 500 <= i < 503 else 20.0, None) for i in range(7 * DAY)])
+               [(75.0 if 100 <= i < 104 or 500 <= i < 503 else 0.0, None) for i in range(7 * DAY)])
     # SRV-D: 沒有 CSV → CPU 空白 + 備註
 json.dump(cfg, open(os.path.join(tmp if MODE == "weekdir" else app, "config.json"), "w", encoding="utf-8"),
           ensure_ascii=False, indent=2)
