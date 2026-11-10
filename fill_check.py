@@ -429,9 +429,17 @@ def monitor_marks(path):
 
 
 def monitor_columns(ws):
-    """監控欄標題 → 欄號（檢核表沒有的標題略過）"""
-    headers = {str(c.value).strip(): c.column for c in ws[HEADER_ROW] if c.value is not None}
-    return {h: headers[h] for h in MONITOR_COLUMNS if h in headers}
+    """監控欄標題 → 欄號（檢核表沒有的標題略過）
+    標題整段相同或第一行相同都算，例: 「Disk 1\n(C槽、[/])」對應設定的「Disk 1」"""
+    cols = {}
+    for c in ws[HEADER_ROW]:
+        if c.value is None:
+            continue
+        text = str(c.value).strip()
+        for key in (text, text.splitlines()[0].strip()):
+            if key in MONITOR_COLUMNS and key not in cols:
+                cols[key] = c.column
+    return cols
 
 
 def clear_monitor(marks):
@@ -715,7 +723,8 @@ def main():
         else:
             print("        (check paths.csv_dir in config.json)")
         sys.exit(1)
-    all_csv = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
+    # monitor_check 的報表（report_dir 與 csv_dir 設成同一個資料夾時）不是事件 CSV
+    all_csv = sorted(p for p in glob.glob(os.path.join(csv_dir, "*.csv")) if not p.lower().endswith("_monitor_report.csv"))
     latest = {}  # 伺服器 → (日期, 路徑)；同一週有多次時取最新日期
     for p in all_csv:
         host, d = parse_filename(p)

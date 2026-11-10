@@ -135,8 +135,8 @@ CSV 多了 `TimeCreated`、`Count` 欄位；追蹤表想顯示的話，在追蹤
 |---|---|---|
 | [1/4] 撈 event log | 讀 config.json，把路徑當參數執行 `weekly.collector` 指定的撈取腳本（預設 `EventLogCheck.ps1`；只撈本機時改成 `EventLogCheck_Local.ps1`） | 讀不到 config.json 或結束碼 1（資料夾無法使用或全部伺服器失敗）→ **整個停止**，不跑 Kettle、不填表；結束碼 2（沒有事件）照常往下 |
 | [2/4] Kettle | **切換到 Kettle 安裝資料夾**執行 `weekly.kitchen /file:weekly.kettle_job`（Kitchen.bat 用相對路徑，`weekly.kitchen` 要指向安裝資料夾裡的 Kitchen.bat，例 `D:/Kettle94/Kitchen.bat`），log 寫到 config.json 的 `log_dir\yyyyMMdd_kettle.log`（Job 讀 config.json，見「Kettle 完整作法」） | Kitchen / Job 找不到或結束碼非 0 → 跳過 [3/4]，**繼續填表但監控欄清空** |
-| [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → **繼續填表但監控欄清空** |
-| [4/4] fill_check | 有 `fill_check.exe`（同資料夾）就執行 exe，沒有就用 Python；[2]、[3] 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
+| [3/4] monitor_check | 有 `monitor_check.exe` 就執行 exe，沒有就用 Python 執行 `monitor_check.py`，產生監控報表 | 結束碼非 0 → 只顯示警告（含結束碼），**監控欄照常填**：fill_check 自己讀 Kettle CSV 判斷，報表只是明細 |
+| [4/4] fill_check | 有 `fill_check.exe`（同資料夾）就執行 exe，沒有就用 Python；[2] Kettle 失敗時加 `--clear-monitor` | 依結果顯示 `Done.` 或錯誤訊息 |
 
 最後列出失敗的步驟（`[WARN] Failed steps: Kettle`），停在視窗等按任意鍵。
 
@@ -386,7 +386,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 |---|---|---|
 | `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 監控 CSV 的**固定資料夾**（例: `D:/SystemCheck/monitor`），Kettle 每次先清空再覆蓋 |
 | `days` | Kettle | 撈最近幾天（SQL 的 `interval ${DAYS} day`） |
-| `report_dir` | monitor_check | 報表輸出資料夾 |
+| `report_dir` | monitor_check | 報表輸出資料夾（建議和 `paths.csv_dir`、`monitor.csv_dir` 分開；放在一起時 `*_monitor_report.csv` 會被略過） |
 | `x_over_minutes` | fill_check | 連續超過 spec 幾分鐘以上才在檢核表填 X（預設 5）；報表的 `OVER SPEC` 仍列出所有超標 |
 | `columns` | fill_check | 檢核表 / template 的監控欄標題 → CSV 欄位 |
 | `trend` | monitor_check、fill_check | 持續上升門檻，null = 預設 `{"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1, "edge_minutes": 60}` |
@@ -682,7 +682,7 @@ Start → read_config.ktr → Write to log → Delete files → monitor.ktr → 
 - 備註和事件檢視器的內容並存；`[監控]` 開頭的行重跑時會先移除再寫，不會重複
 - Kettle 資料夾不存在：顯示 `[WARN] Monitor CSV folder not found`，監控欄清空
 - `--clear-monitor`（run_weekly.bat 在 Kettle 或 monitor_check 失敗時加上）：不讀監控資料，監控欄清空
-- `columns` 的左邊是檢核表的欄位標題（要和第 `header_row` 列的文字一樣），右邊是 Kettle CSV 的欄位
+- `columns` 的左邊是檢核表的欄位標題（和第 `header_row` 列的文字整段相同或**第一行相同**即可，例 `Disk 1` 對 `Disk 1`↵`(C槽、[/])`），右邊是 Kettle CSV 的欄位
 - `trend` 為 null 時用 monitor_check 的預設（每天平均、5% / 1%）
 
 ### 只有時間沒有數據

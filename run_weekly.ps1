@@ -8,7 +8,8 @@
 #   paths.csv_dir -> -OutDir, log_dir -> -LogDir, eventlog.server_list / exclude_file / days / start_time / end_time
 # Failure handling:
 #   [1/4] fails (exit 1)          -> stop, nothing else runs
-#   [2/4] or [3/4] fails          -> fill_check still runs with --clear-monitor (monitor columns cleared)
+#   [2/4] Kettle fails            -> fill_check still runs with --clear-monitor (monitor columns cleared)
+#   [3/4] monitor_check fails     -> warning only: fill_check reads the Kettle CSVs itself, the report is just for reading
 # Exit code: 1 = config or event log collection failed, otherwise fill_check's exit code (3 = Excel file open)
 # Keep this file pure ASCII (Windows PowerShell 5.1 reads BOM-less files as ANSI)
 param(
@@ -58,6 +59,7 @@ $collector = if ($weekly.collector) { [string]$weekly.collector } else { 'EventL
 $kitchen   = Resolve-ConfigPath $weekly.kitchen
 $kettleJob = Resolve-ConfigPath $weekly.kettle_job
 $failed    = @()
+$reportFailed = $false
 
 # ---------- [1/4] event logs ----------
 Write-Host ""
@@ -151,15 +153,16 @@ if ($kettleOk) {
         $code = $LASTEXITCODE
     }
     if ($code -ne 0) {
-        Write-Host "[ERROR] monitor_check failed - monitor columns in the check sheet will be cleared"
-        $failed += 'monitor_check'
+        # fill_check analyses the Kettle CSVs itself, so the check sheet does not depend on this report
+        Write-Host "[WARN] monitor_check failed (exit code $code) - no monitor report; the check sheet is still filled from the Kettle CSVs"
+        $reportFailed = $true
     }
 }
 
 # ---------- [4/4] fill_check ----------
 Write-Host ""
 Write-Host "[4/4] Filling check sheet and tracking sheet..."
-# When Kettle or monitor_check failed, --clear-monitor empties the monitor columns (CPU, Memory, ...)
+# When Kettle failed, --clear-monitor empties the monitor columns (CPU, Memory, ...)
 $fillArgs = @()
 if ($failed.Count -gt 0) { $fillArgs += '--clear-monitor' }
 # fill_check.exe (onefile) next to this script; the old onedir layout fill_check\fill_check.exe still works
@@ -181,5 +184,8 @@ else {
 if ($failed.Count -gt 0) {
     Write-Host ""
     Write-Host "[WARN] Failed steps: $($failed -join ' ') - monitor columns were cleared, see the messages above"
+}
+if ($reportFailed) {
+    Write-Host "[WARN] monitor_check failed (report only) - see its log: <log_dir>\yyyyMMdd_monitor_check.log"
 }
 exit $code

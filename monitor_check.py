@@ -294,6 +294,8 @@ def analyze_folder(csv_dir, trend):
     只有時間沒有數值的主機 rows 全是 NO DATA，另外帶 error=NO_VALUES"""
     hosts = {}
     for p in sorted(glob.glob(os.path.join(csv_dir, "*.csv"))):
+        if p.lower().endswith("_monitor_report.csv"):   # 自己的報表（report_dir 與 csv_dir 同資料夾時）
+            continue
         host = os.path.splitext(os.path.basename(p))[0].upper()
         try:
             metrics, spec, data, skipped = load_host(p)

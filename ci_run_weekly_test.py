@@ -80,8 +80,8 @@ assert "Failed steps: Kettle" in out, out
 
 out, calls = scenario("monitor_failed", monitor=1)
 assert [c.split()[0] for c in calls] == ["collector", "kitchen", "monitor", "fill"], calls
-assert calls[3] == "fill --clear-monitor", calls
-assert "Failed steps: monitor_check" in out, out
+assert calls[3] == "fill", calls   # 報表失敗不清空監控欄（fill_check 自己讀 Kettle CSV）
+assert "monitor_check failed (exit code 1)" in out and "Failed steps" not in out, out
 
 out, calls = scenario("no_config", config=False)   # config.json 讀不到 → [1/4] 失敗，整個停止
 assert calls == [], calls

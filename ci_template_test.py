@@ -43,7 +43,7 @@ wb = openpyxl.Workbook()
 ws = wb.active
 ws.title = "Server"
 ws.append(["Host Name", "Checker", "事件檢視器\n系統錯誤", "事件檢視器\n警告事件", "防毒軟體", "CPU", "連結", "備註"]
-          + (["Memory", "Disk 2"] if MODE == "monitor" else []))
+          + (["Memory", "Disk 2\n(D槽、[/oradata])"] if MODE == "monitor" else []))   # 標題第一行 = Disk 2
 for host in ("SRV-A", "SRV-B", "SRV-C", "SRV-D"):
     ws.append([host, "Ned"])
 ws.append(["(季檢,下次 10/1, 2027/1/7)"])   # row 6: yellow merged separator
@@ -85,6 +85,8 @@ if MODE == "weekdir":   # csv_dir with {week}: CSVs live in the week folder
     csv_setting = os.path.join(tmp, "{week}", "csv")
     csv_dir = os.path.join(tmp, "W2642", "csv")
 os.makedirs(csv_dir, exist_ok=True)
+# monitor_check 的報表放在同一個資料夾時不能當成事件 CSV 讀
+open(os.path.join(csv_dir, "20261015_monitor_report.csv"), "w", encoding="utf-8-sig").write("host,result,metric\nX,OK,cpu\n")
 hdr = "LevelDisplayName,Id,LogName,Message,TimeCreated,Count\n"
 open(os.path.join(csv_dir, "20261015_SRV-A.csv"), "w", encoding="utf-8-sig").write(
     hdr + "錯誤,1801,System,boot cert,2026-10-15 10:00:00,1\n警告,10016,System,DCOM,2026-10-15 10:00:00,3\n")
@@ -139,6 +141,7 @@ def run(*extra):
                        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
     print(r.stdout, r.stderr)
     assert r.returncode == 0, r.returncode
+    assert "monitor_report" not in r.stdout, "monitor report read as an event CSV"
     if MODE == "weekdir":
         assert "Config: " + os.path.join(tmp, "config.json") in r.stdout, "config.json in parent folder not used"
     return r.stdout

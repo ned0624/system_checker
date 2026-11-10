@@ -62,6 +62,8 @@ write("host-b.csv", ",25.60,10.00,40.00,420.00,625.00", rows, header=False, enc=
 
 # HOST-C: 壞檔 → WARN 但不中斷
 open(os.path.join(export, "host-c.csv"), "w").write("garbage\n1,2,3\n")
+# 報表資料夾和 Kettle 資料夾同一個時，自己的報表不能被當成主機
+open(os.path.join(export, "20261103_monitor_report.csv"), "w").write("host,result,metric\nX,OK,cpu\n")
 
 # HOST-E: 只有時間沒有數值（Kettle SQL 的 monitor_item 對不到）→ WARN
 write("host-e.csv", ",", [(None, None)] * 120, columns="time_min,cpu,disk2")
@@ -132,6 +134,7 @@ assert rep["HOST-K", "memory"]["rising"] == "N" and float(rep["HOST-K", "memory"
 assert rep["HOST-G", "cpu"]["rising"] == "N" and rep["HOST-G", "cpu"]["result"] == "OK", rep["HOST-G", "cpu"]
 assert rep["HOST-B", "cpu"]["spec"] == "" and rep["HOST-B", "cpu"]["over_count"] == "0", rep["HOST-B", "cpu"]
 assert not any(h == "HOST-C" for h, _ in rep), "broken file should not be in report"
+assert not any("MONITOR_REPORT" in h for h, _ in rep), "own report read as a host"
 d = rep["HOST-D", "memory"]
 assert d["over_count"] == "1" and d["rising"] == "-" and d["result"] == "OVER SPEC", d
 log = open(glob.glob(os.path.join(tmp, "logs", "*_monitor_check.log"))[0], encoding="utf-8-sig").read()
