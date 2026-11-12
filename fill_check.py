@@ -27,6 +27,8 @@
    - 當週檔已存在（重跑）就以它為底更新，保留手動填的內容；否則從範本產生
    - 有底色的格子（灰、黑、黃…）與合併儲存格不填
    - 沒有本週 CSV 的伺服器，事件檢視器兩欄填 O O；防毒軟體欄全填 O
+   - 但每日 log（log_dir/yyyyMMdd.log）最後一次撈取記錄為 FAILED 的伺服器（例: RPC 連不上），
+     事件兩欄留空白、備註寫「[事件] 撈取失敗：原因」
    - 連結欄：有設定 check_sheet.link_target 時，每一列的超連結由程式產生
      （例: //server/share/System Check/{week}/Reference/BOS，可用 {week}/{yy}/{ww}/{host}）；
      link_text 設定顯示文字，null = 沿用範本原本文字並換週別（空白格顯示最後一層資料夾名稱）
@@ -380,14 +382,23 @@ def set_link(cell, host, week):
                          underline="single", color="FF0563C1")
 
 
-def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week):
-    """範本模式：沒有本週 CSV 的伺服器填 O O、防毒填 O、連結改成本週；回傳沒有 CSV 而填 O O 的伺服器"""
-    no_csv = []
+def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week, failed=None):
+    """範本模式：沒有本週 CSV 的伺服器填 O O、防毒填 O、連結改成本週
+    failed = {伺服器(大寫): 原因}：log 記錄撈取失敗的伺服器，事件兩欄留空白、備註寫原因（不填 O O）
+    回傳 (沒有 CSV 而填 O O 的伺服器, 撈取失敗而留空白的伺服器)"""
+    no_csv, failed_rows = [], []
+    failed = failed or {}
     for name, r in sorted(host_rows.items(), key=lambda x: x[1]):
         host = str(ws.cell(row=r, column=1).value).strip()
         if not HOSTNAME_RE.match(host):
             continue  # 分隔列等非伺服器名稱
-        if r not in filled_rows:
+        if r not in filled_rows and host.upper() in failed:
+            set_cell(ws, r, cols[WARN_HEADER], None)
+            set_cell(ws, r, cols[ERROR_HEADER], None)
+            if set_cell(ws, r, cols[NOTE_HEADER], f"{EVENT_NOTE} 撈取失敗：{failed[host.upper()]}"):
+                ws.cell(row=r, column=cols[NOTE_HEADER]).alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
+            failed_rows.append(host)
+        elif r not in filled_rows:
             wrote = set_cell(ws, r, cols[WARN_HEADER], "O")
             wrote = set_cell(ws, r, cols[ERROR_HEADER], "O") or wrote
             if wrote:
@@ -409,7 +420,53 @@ def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week):
                     cell.hyperlink.target = update_week_tokens(cell.hyperlink.target, week)
                 if cell.hyperlink.display:
                     cell.hyperlink.display = update_week_tokens(cell.hyperlink.display, week)
-    return no_csv
+    return no_csv, failed_rows
+
+
+# ---------- 撈取失敗（讀每日 log）----------
+
+EVENT_NOTE = "[事件]"
+FAIL_LINE = re.compile(r"^\s*FAILED:\s*(\S+)")
+FAIL_REASON = re.compile(r"^\s*\[ERROR\]\s+(\S+)\s+(cannot list event logs: .*|cannot write CSV.*)$")
+
+
+def collect_failures(week):
+    """本週的每日 log（log_dir 下 yyyyMMdd.log，取週內最新一天）中最後一次 EventLogCheck 撈取失敗的伺服器
+    → ({伺服器(大寫): 原因}, log 路徑)；找不到 log 回傳 ({}, None)"""
+    log_dir = week_path(LOG_DIR, week)
+    days = []
+    for p in glob.glob(os.path.join(log_dir, "*.log")):
+        m = re.fullmatch(r"(\d{8})\.log", os.path.basename(p))
+        if m:
+            try:
+                d = datetime.strptime(m.group(1), "%Y%m%d").date()
+            except ValueError:
+                continue
+            if week_label(d) == week:
+                days.append((d, p))
+    if not days:
+        return {}, None
+    path = max(days)[1]
+    try:
+        text = open(path, encoding="utf-8-sig", errors="replace").read()
+    except OSError:
+        return {}, None
+    start = text.rfind("===== EventLogCheck start")
+    if start < 0:
+        return {}, path
+    reasons, failed = {}, {}
+    for line in text[start:].splitlines():
+        m = FAIL_REASON.match(line)
+        if m:
+            msg = m.group(2)
+            reasons[m.group(1).upper()] = msg.split(": ", 1)[1].strip() if ": " in msg else msg.strip()
+            continue
+        m = FAIL_LINE.match(line)
+        if m:
+            failed[m.group(1).upper()] = None
+        if line.startswith("===== EventLogCheck ") and "start" not in line:
+            break   # 這次撈取結束
+    return {h: reasons.get(h) or "見 log" for h in failed}, path
 
 
 # ---------- 監控數據 ----------
@@ -792,6 +849,13 @@ def main():
             problems.append((fname, f"ERROR: O/X not filled ({e})"))
         results.append(dict(host=host, week=week_label(d), fname=fname, df=df, check=check))
 
+    # ---- 1a. 撈取失敗的伺服器（每日 log）：沒有 CSV 也不能當成沒事件填 O O ----
+    failed_hosts, fail_log = collect_failures(week)
+    if failed_hosts:
+        print(f"\nEvent log collection failed (from {fail_log}):")
+        for h, why in failed_hosts.items():
+            print(f"  {h}: {why}")
+
     # ---- 1b. 監控數據：依範本打 O 的格子算出 O/X 與備註 ----
     monitor = None
     if MONITOR_CSV_DIR:
@@ -823,10 +887,13 @@ def main():
                 filled_rows.add(r)
         build_check.missing = missing
         if template_mode:
-            no_csv = finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week)
+            no_csv, failed_rows = finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week, failed_hosts)
             print(f"Check sheet: antivirus = O, links updated to {week}")
             if no_csv:
                 print(f"Servers without a {week} CSV, event columns set to O O: {', '.join(no_csv)}")
+            if failed_rows:
+                print(f"Servers whose event log collection failed, event columns left blank: {', '.join(failed_rows)}")
+            build_check.failed_rows = failed_rows
         if monitor is not None:
             write_monitor(ws, host_rows, monitor, cols[NOTE_HEADER])
         return wb
@@ -835,6 +902,8 @@ def main():
     for fname in getattr(build_check, "missing", []):
         print(f"  [SKIP] {fname}: server not found in first column of check sheet")
         problems.append((fname, "SKIP: server not in check sheet, O/X not filled (tracking sheet still pasted)"))
+    for h in getattr(build_check, "failed_rows", []):
+        problems.append((h, f"WARN: event log collection failed ({failed_hosts[h.upper()]}), event columns left blank"))
 
     # ---- 3. 追蹤表：同樣等沒人開著再寫 ----
     def build_track():

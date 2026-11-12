@@ -132,6 +132,15 @@ if MODE == "monitor":
     kettle_csv("SRV-B", "time_min,cpu,memory", "60.00,25.60",
                [(75.0 if 100 <= i < 104 or 500 <= i < 503 else 0.0, None) for i in range(7 * DAY)])
     # SRV-D: 沒有 CSV → CPU 空白 + 備註
+if MODE == "weekdir":   # 每日 log：最後一次撈取 SRV-D 失敗（RPC）；前一次 SRV-B 失敗但之後那次沒失敗 → SRV-B 照舊 O O
+    os.makedirs(os.path.join(tmp, "W2642", "logs"), exist_ok=True)
+    open(os.path.join(tmp, "W2642", "logs", "20261016.log"), "w", encoding="utf-8-sig").write(
+        "===== EventLogCheck start 2026-10-16 08:00:00 =====\n"
+        "SRV-B\n  [ERROR] SRV-B cannot list event logs: timeout\n  FAILED: SRV-B\n"
+        "===== EventLogCheck done: 2 servers: 0 with CSV, 1 without events, 1 failed =====\n"
+        "===== EventLogCheck start 2026-10-16 09:00:00 =====\n"
+        "SRV-D\n  [ERROR] SRV-D cannot list event logs: RPC 伺服器無法使用。\n"
+        "  FAILED: SRV-D\n===== EventLogCheck done: 2 servers: 0 with CSV, 1 without events, 1 failed =====\n")
 json.dump(cfg, open(os.path.join(tmp if MODE == "weekdir" else app, "config.json"), "w", encoding="utf-8"),
           ensure_ascii=False, indent=2)
 
@@ -165,7 +174,11 @@ assert (v("C3"), v("D3")) == ("O", "O") and (MODE == "monitor" or v("H3") is Non
 # SRV-C (row 4): gray cells untouched
 assert (v("C4"), v("D4"), v("E4")) == (None, None, None), (v("C4"), v("D4"), v("E4"))
 # SRV-D (row 5): theme-gray antivirus untouched, events O O
-assert v("E5") is None and (v("C5"), v("D5")) == ("O", "O"), (v("E5"), v("C5"), v("D5"))
+if MODE == "weekdir":   # log 記錄撈取失敗 → 不填 O O，留空白 + 備註原因
+    assert v("E5") is None and (v("C5"), v("D5")) == (None, None), (v("E5"), v("C5"), v("D5"))
+    assert v("H5") == "[事件] 撈取失敗：RPC 伺服器無法使用。", v("H5")
+else:
+    assert v("E5") is None and (v("C5"), v("D5")) == ("O", "O"), (v("E5"), v("C5"), v("D5"))
 # separator row 6 untouched
 assert all(v(f"{c}6") is None for c in "BCDEFGH"), [v(f"{c}6") for c in "BCDEFGH"]
 # SRV-E (row 7): black error cell untouched, warning O, antivirus O
