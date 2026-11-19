@@ -97,6 +97,26 @@ write("host-l.csv", "60.00", [(70.0 if 30 <= i < 35 else 20.0,) for i in range(1
 # HOST-Z: 每分鐘都是 0（cpu spec 60、swap spec 0、disk3 沒有 spec）→ 0 也算有資料，不是 NO DATA
 write("host-z.csv", "60.00,0.00,", [(0.0, 0.0, 0.0)] * (4 * DAY), columns="time_min,cpu,swap,disk3")
 
+# ---- 常見的三種形狀（持續上升 = HOST-A memory / HOST-J）----
+def diurnal(i):   # 日夜起伏 + 小雜訊
+    return 0.8 * math.sin(2 * math.pi * i / DAY) + 0.1 * math.sin(i / 7)
+
+
+def steps(i, at, h, release=0.0):
+    """階梯：在 at 的每個時間點跳 h，跳完 6 小時內退 release"""
+    return sum(h - min(release, release * (i - t) / 360) for t in at if i >= t)
+
+
+# HOST-S1: 階梯上升，3 階、每階 +1.2、階與階之間持平 → RISING
+STEPS = [int(1.3 * DAY), int(3.1 * DAY), int(5.4 * DAY)]
+write("host-s1.csv", "25.60", [(15 + diurnal(i) + steps(i, STEPS, 1.2),) for i in range(N)], columns="time_min,memory")
+# HOST-S2: 階梯上升，每階跳 +1.6 後 6 小時內退 0.5 → RISING
+write("host-s2.csv", "25.60", [(15 + diurnal(i) + steps(i, STEPS, 1.6, 0.5),) for i in range(N)], columns="time_min,memory")
+# HOST-S3: 突然上升 +5 後緩慢下降（退到 +1）→ 不算持續上升，也沒超標 → OK
+J = DAY // 2
+write("host-s3.csv", "25.60", [(15 + diurnal(i) + (0 if i < J else 5 - 4 * (i - J) / (N - J)),) for i in range(N)],
+      columns="time_min,memory")
+
 # HOST-M: 7 天中間停了 25 小時（少一天以上）→ low data，列出最長中斷時段
 rows = [(20.0,) if not (2 * DAY <= i < 3 * DAY + 60) else (None,) for i in range(N)]
 write("host-m.csv", "60.00", rows, columns="time_min,cpu")
@@ -153,6 +173,10 @@ assert rep["HOST-L", "cpu"]["result"] == "OVER SPEC" and rep["HOST-L", "cpu"]["l
 for m in ("cpu", "swap", "disk3"):
     z = rep["HOST-Z", m]
     assert z["result"] == "OK" and z["max"] == "0.00", z
+for h in ("HOST-S1", "HOST-S2"):   # 階梯上升
+    assert rep[h, "memory"]["rising"] == "Y" and rep[h, "memory"]["result"] == "RISING", rep[h, "memory"]
+s3 = rep["HOST-S3", "memory"]       # 突然上升後緩慢下降
+assert s3["rising"] == "N" and s3["result"] == "OK", s3
 d = rep["HOST-D", "memory"]
 assert d["over_count"] == "1" and d["longest_over_min"] == "1" and d["rising"] == "-" and d["result"] == "OK", d
 log = open(glob.glob(os.path.join(tmp, "logs", "*.log"))[0], encoding="utf-8-sig").read()
