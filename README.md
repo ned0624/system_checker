@@ -217,6 +217,11 @@ python fill_check.py <csv資料夾> <檢核表xlsx> <追蹤表xlsx>   # 暫時�
 - **撈取失敗的伺服器不填 O O**：fill_check 讀本週的每日 log（`log_dir\yyyyMMdd.log`，取週內最新一天）裡**最後一次** EventLogCheck 的
   `FAILED: <伺服器>`，這些伺服器（又沒有本週 CSV 時）事件兩欄留空白，備註寫 `[事件] 撈取失敗：RPC 伺服器無法使用。` 這類原因，
   最後彙總也會列出；之後重撈成功就照常填
+- **對照 server list**（`eventlog.server_list`，和 EventLogCheck.ps1 用同一個檔案）：
+  - 檢核表有、**清單沒有**、又沒有本週 CSV 的伺服器 = 根本沒撈過 → 事件兩欄留空白，備註寫 `[事件] 不在 server list，未撈取`，彙總列出
+  - **清單有、檢核表找不到**的伺服器 → 彙總列出 `in server list but not in check sheet`（通常是名稱打錯或檢核表漏了這一列）
+  - 事件兩欄都是底色的列（不檢查事件）不受影響；清單讀不到時提醒並照舊填 O O；
+    `weekly.collector` 是 `EventLogCheck_Local.ps1`（只撈本機）時不檢查
 - 防毒軟體欄全部填 O
 - 連結欄：設定 `link_target` 時，每一列的超連結由程式產生，例如只連到當週的 BOS 資料夾：
   ```json
@@ -375,6 +380,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | 項目 | 判定 |
 |---|---|
 | 超過 spec | 數值 > `upper_spec` 且**連續 ≥ 5 分鐘**（`x_over_minutes`）才算 `OVER SPEC`；超標分鐘數、首次/最後時間、最長連續分鐘數、最大值與時間都會記錄（較短的超標也記）。spec 空白則不檢查 |
+| 資料量不足 | 有數值的分鐘數比 `days` 天（每分鐘一筆，7 天 = 10080 筆）**少了 `max_missing_minutes` 分鐘以上**（預設 1440 = 少一天以上）→ `[WARN] <主機>: low data: ...`，並列出最長中斷的時段；報表的 `low_data` 欄記同樣內容。fill_check 的 O/X 照填，備註加 `[監控] 資料量不足：只有 5.9 天（應有 7 天，少 1.1 天），最長中斷 26.0 小時（10/13 08:59 ~ 10/14 11:00）` |
 | 持續上升沒降下來 | 每天取平均（從最後一筆往回每 24 小時一段，最舊不完整的一天捨棄），一週升幅 ≥ spec 的 5%，且過程中從最高點回落 ≤ spec 的 1%，**而且最後沒有降下來**：最後 60 分鐘平均 − 最前 60 分鐘平均（`edge_minutes`）也要 ≥ spec 的 5%，否則不算持續上升（例：spec 4.8，開始 60 分鐘平均 3.6、最後 60 分鐘平均 3.7，差 0.1 < 0.24 → 已降下來）。報表的 `rise` 就是這個頭尾平均差。日夜起伏、上下跳動的不會誤判；判定上升時估算照目前速度約幾小時（天）後達 spec。不足 3 天的資料不判定（`rising` 顯示 `-`）；沒有 spec 時以第一天平均為基準 |
 
 設定在共用 `config.json` 的 `monitor` 段（Kettle、monitor_check、fill_check 都讀這段）：
@@ -385,6 +391,7 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
     "days": 7,
     "report_dir": "D:/SystemCheck/monitor_report",
     "x_over_minutes": 5,
+    "max_missing_minutes": 1440,
     "columns": {"CPU": "cpu", "Memory": "memory", "SWAP": "swap", "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"},
     "trend": null
 }
@@ -393,7 +400,8 @@ upper_spec,60.00,25.60,10.00,40.00,420.00,625.00
 | 欄位 | 誰用 | 說明 |
 |---|---|---|
 | `csv_dir` | Kettle 輸出、monitor_check / fill_check 讀取 | 監控 CSV 的**固定資料夾**（例: `D:/SystemCheck/monitor`），Kettle 每次先清空再覆蓋 |
-| `days` | Kettle | 撈最近幾天（SQL 的 `interval ${DAYS} day`） |
+| `days` | Kettle、monitor_check、fill_check | 撈最近幾天（SQL 的 `interval ${DAYS} day`）；也是資料量檢查的基準（預設 7） |
+| `max_missing_minutes` | monitor_check、fill_check | 資料比 `days` 天少了幾分鐘以上算資料量不足（預設 1440 = 一天） |
 | `report_dir` | monitor_check | 報表輸出資料夾（建議和 `paths.csv_dir`、`monitor.csv_dir` 分開；放在一起時 `*_monitor_report.csv` 會被略過） |
 | `x_over_minutes` | monitor_check、fill_check | 連續超過 spec 幾分鐘以上才算 `OVER SPEC`、在檢核表填 X（預設 5）；較短的超標仍記在報表的 `over_count` / `longest_over_min` 與備註 |
 | `columns` | fill_check | 檢核表 / template 的監控欄標題 → CSV 欄位 |

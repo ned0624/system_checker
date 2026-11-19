@@ -97,6 +97,14 @@ write("host-l.csv", "60.00", [(70.0 if 30 <= i < 35 else 20.0,) for i in range(1
 # HOST-Z: 每分鐘都是 0（cpu spec 60、swap spec 0、disk3 沒有 spec）→ 0 也算有資料，不是 NO DATA
 write("host-z.csv", "60.00,0.00,", [(0.0, 0.0, 0.0)] * (4 * DAY), columns="time_min,cpu,swap,disk3")
 
+# HOST-M: 7 天中間停了 25 小時（少一天以上）→ low data，列出最長中斷時段
+rows = [(20.0,) if not (2 * DAY <= i < 3 * DAY + 60) else (None,) for i in range(N)]
+write("host-m.csv", "60.00", rows, columns="time_min,cpu")
+
+# HOST-N: 7 天中間停了 23 小時（不到一天）→ 不算 low data
+rows = [(20.0,) if not (2 * DAY <= i < 3 * DAY - 60) else (None,) for i in range(N)]
+write("host-n.csv", "60.00", rows, columns="time_min,cpu")
+
 # HOST-D: 只有 3 小時 → 不判定上升；只超標 1 分鐘（< 5 分鐘）→ 不算 OVER SPEC，但 over_count 照記
 rows = [(10.0, 30.0 if i == 10 else 20.0, 30.0, 300.0, 500.0) for i in range(180)]
 write("host-d.csv", "60.00,25.60,40.00,420.00,625.00", rows)
@@ -149,9 +157,25 @@ d = rep["HOST-D", "memory"]
 assert d["over_count"] == "1" and d["longest_over_min"] == "1" and d["rising"] == "-" and d["result"] == "OK", d
 log = open(glob.glob(os.path.join(tmp, "logs", "*.log"))[0], encoding="utf-8-sig").read()
 assert "[WARN] HOST-E: 120 rows, no values in any column" in log, log
-assert "HOST-Z: " + str(4 * DAY) + " rows" in log and "[WARN] HOST-Z" not in log, log
+assert "HOST-Z: " + str(4 * DAY) + " rows" in log and "[WARN] HOST-Z: low data: 5760 of 10080 minutes" in log, log
+assert "[WARN] HOST-Z: no values" not in log, log
+assert ("[WARN] HOST-M: low data: 8580 of 10080 minutes (6.0 of 7 days, missing 1.0 days), "
+        "longest gap 25.0 h (2026-10-29 23:59 ~ 2026-10-31 01:00)") in log, log
+assert "[WARN] HOST-N" not in log and "[WARN] HOST-A" not in log and "[WARN] HOST-E: low data" not in log, log
+assert rep["HOST-M", "cpu"]["low_data"].startswith("low data: 8580") and rep["HOST-M", "cpu"]["result"] == "OK"
+assert rep["HOST-N", "cpu"]["low_data"] == "" and rep["HOST-A", "cpu"]["low_data"] == "", rep["HOST-N", "cpu"]
 assert "[WARN] HOST-C" in log and "[RISING] HOST-A memory" in log and "[OVER SPEC] HOST-A cpu" in log, log
 assert not os.path.exists(os.path.join(tmp, "{week}")), "literal {week} folder created"
+
+# monitor.days / max_missing_minutes：4 天的 HOST-Z 不算不足；容許少 2 天 → 少 25 小時的 HOST-M 也不算
+json.dump({"log_dir": "logs", "monitor": {"csv_dir": "{yyyy}-W{ww}", "report_dir": os.path.join("{week}", "report"),
+                                          "days": 4, "max_missing_minutes": 2 * DAY}},
+          open(os.path.join(tmp, "config.json"), "w"))
+os.remove(os.path.join(tmp, "logs", os.listdir(os.path.join(tmp, "logs"))[0]))
+r = run()
+log = open(glob.glob(os.path.join(tmp, "logs", "*.log"))[0], encoding="utf-8-sig").read()
+assert r.returncode == 0 and "[WARN] HOST-Z" not in log and "[WARN] HOST-M" not in log, log
+assert "[WARN] HOST-D: low data: 180 of 5760 minutes" in log, log
 
 r = run(os.path.join(tmp, "no_such_dir"))
 assert r.returncode == 1 and "CSV folder not found" in r.stdout, r.returncode

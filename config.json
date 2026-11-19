@@ -57,6 +57,7 @@
         "days": 7,
         "report_dir": "D:/SystemCheck/monitor_report",
         "x_over_minutes": 5,
+        "max_missing_minutes": 1440,
         "columns": {
             "CPU": "cpu",
             "Memory": "memory",

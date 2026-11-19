@@ -24,6 +24,7 @@ tmp = os.path.abspath(sys.argv[1])
 # mode: weekswap (no link_target) / rule (link_target, link_text null) / ruletext (link_target + link_text)
 #       locked (file open by someone) / weekdir (paths.csv_dir contains {week})
 #       monitor (Kettle monitor CSVs -> CPU/Memory/Disk 2 columns marked O in the template + notes)
+#       serverlist (eventlog.server_list: servers not in the list are left blank, list servers missing in the sheet warned)
 MODE = sys.argv[2] if len(sys.argv) > 2 else "weekswap"
 os.makedirs(tmp, exist_ok=True)
 app = os.path.join(tmp, "app")
@@ -92,6 +93,9 @@ open(os.path.join(csv_dir, "20261015_SRV-A.csv"), "w", encoding="utf-8-sig").wri
     hdr + "錯誤,1801,System,boot cert,2026-10-15 10:00:00,1\n警告,10016,System,DCOM,2026-10-15 10:00:00,3\n")
 open(os.path.join(csv_dir, "20261008_SRV-B.csv"), "w", encoding="utf-8-sig").write(
     hdr + "錯誤,999,System,last week error,2026-10-08 10:00:00,1\n")
+if MODE == "serverlist":   # SRV-Y 在清單也有 CSV，但檢核表沒有這台 → [SKIP]（不重複提醒）
+    open(os.path.join(csv_dir, "20261015_SRV-Y.csv"), "w", encoding="utf-8-sig").write(
+        hdr + "錯誤,1801,System,boot cert,2026-10-15 10:00:00,1\n")
 
 out_pattern = os.path.join(tmp, "out", "{week}", "BOS_{week}.xlsx")
 cfg = {
@@ -106,6 +110,12 @@ cfg = {
     # weekdir: config.json 放在 app 的上一層（共用設定檔位置），log_dir 用相對路徑 → 以設定檔資料夾為基準
     "log_dir": os.path.join("{week}", "logs") if MODE == "weekdir" else os.path.join(tmp, "logs"),
 }
+if MODE == "serverlist":
+    # 撈取清單（MS950、註解、空白行、小寫）：沒有 SRV-C（事件欄灰底）、SRV-E；SRV-X / SRV-Y 不在檢核表
+    open(os.path.join(tmp, "servers.txt"), "w", encoding="cp950").write(
+        "# BOS 伺服器\nsrv-a\nSRV-B\n\nSRV-D\nSRV-X\nSRV-Y\n")
+    cfg["eventlog"] = {"server_list": os.path.join(tmp, "servers.txt")}
+    cfg["weekly"] = {"collector": "EventLogCheck.ps1"}
 LINK_ROOT = os.path.join(tmp, "share")
 if MODE in ("rule", "ruletext"):
     cfg["check_sheet"]["link_target"] = LINK_ROOT.replace("\\", "/") + "/{week}/Reference/BOS"
@@ -128,9 +138,10 @@ if MODE == "monitor":
                [(75.0 if 3000 <= i < 3030 else 20 + 10 * math.sin(2 * math.pi * i / DAY), 15 + 0.0006 * i, 300.0)
                 for i in range(7 * DAY)])
     # SRV-B: cpu 超標但最長只連續 4 分鐘（不到 5 分鐘）→ O + 備註，其餘時間是 0（0 也算有資料）；
-    #        memory 打 O 但沒有數值 → 空白 + 備註
+    #        memory 打 O 但沒有數值 → 空白 + 備註；第 3 天起停了 26 小時（少一天以上）→ 資料量不足備註
     kettle_csv("SRV-B", "time_min,cpu,memory", "60.00,25.60",
-               [(75.0 if 100 <= i < 104 or 500 <= i < 503 else 0.0, None) for i in range(7 * DAY)])
+               [(75.0 if 100 <= i < 104 or 500 <= i < 503 else 0.0 if not 2 * DAY <= i < 3 * DAY + 120 else None, None)
+                for i in range(7 * DAY)])
     # SRV-D: 沒有 CSV → CPU 空白 + 備註
 if MODE == "weekdir":   # 每日 log：最後一次撈取 SRV-D 失敗（RPC）；前一次 SRV-B 失敗但之後那次沒失敗 → SRV-B 照舊 O O
     os.makedirs(os.path.join(tmp, "W2642", "logs"), exist_ok=True)
@@ -157,7 +168,13 @@ def run(*extra):
     return r.stdout
 
 
-run()
+first_out = run()
+if MODE == "serverlist":
+    assert "Server list: " + os.path.join(tmp, "servers.txt") + " (5 servers)" in first_out, first_out
+    assert "SRV-E: WARN: in check sheet but not in server list" in first_out, first_out
+    assert "SRV-C: WARN" not in first_out and "SRV-D: WARN" not in first_out, first_out
+    assert "SRV-X: WARN: in server list but not in check sheet" in first_out, first_out
+    assert "[SKIP] 20261015_SRV-Y.csv" in first_out and "SRV-Y: WARN" not in first_out, first_out
 if MODE == "weekdir":   # log_dir with {week}: log goes to the week folder, no literal {week} folder
     assert glob.glob(os.path.join(tmp, "W2642", "logs", "*.log")), "log not written to week folder"
     assert not os.path.exists(os.path.join(tmp, "{week}")), "literal {week} folder created"
@@ -182,11 +199,16 @@ else:
 # separator row 6 untouched
 assert all(v(f"{c}6") is None for c in "BCDEFGH"), [v(f"{c}6") for c in "BCDEFGH"]
 # SRV-E (row 7): black error cell untouched, warning O, antivirus O
-assert v("C7") is None and v("D7") == "O" and v("E7") == "O", (v("C7"), v("D7"), v("E7"))
+if MODE == "serverlist":   # 不在 server list → 沒撈過，事件欄留空白 + 備註
+    assert v("C7") is None and v("D7") is None and v("E7") == "O", (v("C7"), v("D7"), v("E7"))
+    assert v("H7") == "[事件] 不在 server list，未撈取", v("H7")
+    assert v("H4") is None, v("H4")   # SRV-C 事件欄灰底（不檢查事件）→ 不寫備註
+else:
+    assert v("C7") is None and v("D7") == "O" and v("E7") == "O", (v("C7"), v("D7"), v("E7"))
 # antivirus O on normal rows
 assert [v(f"E{r}") for r in (2, 3)] == ["O", "O"]
 # links
-if MODE in ("weekswap", "locked", "weekdir", "monitor"):
+if MODE in ("weekswap", "locked", "weekdir", "monitor", "serverlist"):
     assert v("G2") == "SRV-A_Evidence_W42", v("G2")
     assert "\\W2642\\" in ws["G2"].hyperlink.target and "_W42.docx" in ws["G2"].hyperlink.target, ws["G2"].hyperlink.target
     assert "\\W2642\\" in v("G3") and "SRV-B_Evidence_W42" in v("G3") and "W2640" not in v("G3"), v("G3")
@@ -208,14 +230,18 @@ if MODE == "monitor":
     assert "[監控] Memory 持續上升" in v("H2") and "Disk 2" not in v("H2"), v("H2")
     assert (v("F3"), v("I3"), v("J3")) == ("O", None, None), (v("F3"), v("I3"), v("J3"))
     assert v("H3").split("\n") == ["[監控] CPU 超過 spec 60.00 共 7 分鐘，最長連續 4 分鐘，最高 75.00（10/11 10:40）",
-                                    "[監控] Memory 無監控資料"], v("H3")
+                                    "[監控] Memory 無監控資料",
+                                    "[監控] 資料量不足：只有 5.9 天（應有 7 天，少 1.1 天），"
+                                    "最長中斷 26.0 小時（10/13 08:59 ~ 10/14 11:00）"], v("H3")
+    assert "資料量不足" not in v("H2"), v("H2")   # SRV-A 7 天完整
     assert v("F5") is None and v("H5") == "[監控] CPU 無監控資料", (v("F5"), v("H5"))
     assert v("F7") is None and v("I7") is None, (v("F7"), v("I7"))
     first_notes = (v("H2"), v("H3"), v("H5"))
 # tracking sheet: only this week's CSV pasted
 trs = openpyxl.load_workbook(track)["事件檢視器_BOS"]
 pasted = [(r[0], r[1]) for r in trs.iter_rows(min_row=2, values_only=True) if r[0]]
-assert pasted and all(p == ("SRV-A", "W2642") for p in pasted), pasted
+expect_pasted = {("SRV-A", "W2642"), ("SRV-Y", "W2642")} if MODE == "serverlist" else {("SRV-A", "W2642")}
+assert pasted and set(pasted) == expect_pasted, pasted
 
 # second run keeps manual edits made in the weekly file
 wb = openpyxl.load_workbook(out)
@@ -245,6 +271,21 @@ if MODE == "monitor":   # 重跑：打 O 從範本讀，[監控] 備註不重複
     assert "[監控]" not in ws["H2"].value, ws["H2"].value
 assert ws["C2"].value == "X"
 assert ws["G2"].value == ("BOS - SRV-A_Evidence_W42" if MODE == "ruletext" else "SRV-A_Evidence_W42"), ws["G2"].value
+if MODE == "serverlist":
+    # 清單讀不到 → 提醒，照舊填 O O（重跑以當週檔為底，空白與備註要恢復）
+    os.remove(os.path.join(tmp, "servers.txt"))
+    o = run()
+    assert "[WARN] cannot read server list" in o and "server list: WARN" in o, o
+    ws = openpyxl.load_workbook(out).active
+    assert ws["D7"].value == "O" and ws["H7"].value is None, (ws["D7"].value, ws["H7"].value)
+    # 撈取腳本是 EventLogCheck_Local.ps1（只撈本機）→ 不檢查清單
+    open(os.path.join(tmp, "servers.txt"), "w").write("SRV-A\n")
+    cfg["weekly"]["collector"] = "EventLogCheck_Local.ps1"
+    json.dump(cfg, open(os.path.join(app, "config.json"), "w", encoding="utf-8"), ensure_ascii=False)
+    o = run()
+    assert "Server list" not in o and "server list" not in o, o
+    ws = openpyxl.load_workbook(out).active
+    assert (ws["D3"].value, ws["D7"].value) == ("O", "O"), (ws["D3"].value, ws["D7"].value)
 print(f"TEMPLATE TEST OK ({MODE})")
 
 if MODE != "locked":

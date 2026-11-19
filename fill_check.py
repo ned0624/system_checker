@@ -34,6 +34,9 @@
      link_text 設定顯示文字，null = 沿用範本原本文字並換週別（空白格顯示最後一層資料夾名稱）
      沒設定 link_target 時，只把範本既有連結的 W2640 → 本週 W2642、_W40 → _W42
    - 只處理本週（或 --week 指定週）的 CSV，同一台有多次取最新日期
+   - eventlog.server_list（撈取用的伺服器清單）有設定時：範本中不在清單、又沒有 CSV 的伺服器沒撈過，
+     事件兩欄留空白、備註寫「[事件] 不在 server list，未撈取」；清單中的伺服器在檢核表找不到也會提醒
+     （weekly.collector 是 EventLogCheck_Local.ps1 時不檢查；清單讀不到時提醒並照舊填 O O）
 
 用法:
     python fill_check.py [--week W2642] [--clear-monitor]
@@ -64,6 +67,9 @@
     monitor.columns                           檢核表監控欄標題 → CSV 欄位（CPU→cpu、Memory→memory、Disk 2→disk2…）
     monitor.trend                             持續上升門檻，null = 用 monitor_check 的預設（每天平均）
     monitor.x_over_minutes                    連續超過 spec 幾分鐘以上才填 X（預設 5）
+    monitor.days / max_missing_minutes        資料量比 days 天（預設 7）少了 max_missing_minutes 分鐘以上（預設 1440 = 一天）
+                                              → O/X 照填，備註寫「[監控] 資料量不足…」並提醒
+    eventlog.server_list                      撈取用的伺服器清單（與 EventLogCheck.ps1 共用），用來檢查檢核表的伺服器有沒有撈過
                                               只填範本中打 O 的格子：連續超過 spec ≥ 5 分鐘 → X，否則 O；打 O 但沒數據 → 空白；
                                               超標、持續上升、沒數據寫進備註（[監控] 開頭，重跑時先移除再寫）
     log_dir                                   log 資料夾，省略 = logs，可用 {week}/{yy}/{ww}（依日期命名，例: 20261016.log；同一天多次執行附加在同一檔）
@@ -173,6 +179,12 @@ TRACK_OUTPUT = _path(_cfg["track"]["output"])
 
 LOG_DIR = _path(_cfg.get("log_dir") or "logs")
 
+# 撈取用的伺服器清單（與 EventLogCheck.ps1 共用）：範本中不在清單的伺服器沒撈過，不能填 O O
+# 撈取腳本是 EventLogCheck_Local.ps1（只撈本機，不用清單）或沒設定時不檢查
+_collector = os.path.basename(str((_cfg.get("weekly") or {}).get("collector") or "EventLogCheck.ps1"))
+SERVER_LIST = (None if _collector.lower().startswith("eventlogcheck_local")
+               else _path((_cfg.get("eventlog") or {}).get("server_list")))
+
 # 監控數據（Kettle 匯出的每台主機 CSV）→ 檢核表 CPU/Memory/... 欄；沒有 monitor 設定就不做
 _mon = _cfg.get("monitor") or {}
 MONITOR_CSV_DIR = _path(_mon.get("csv_dir"))
@@ -180,6 +192,8 @@ MONITOR_COLUMNS = _mon.get("columns") or {"CPU": "cpu", "Memory": "memory", "SWA
                                           "Disk 1": "disk1", "Disk 2": "disk2", "Disk 3": "disk3"}
 MONITOR_TREND   = _mon.get("trend")
 MONITOR_X_MINUTES = int(_mon.get("x_over_minutes", 5))  # 連續超過 spec 幾分鐘以上才填 X
+MONITOR_DAYS    = float(_mon.get("days") or 7)                    # Kettle 撈幾天，資料量檢查的基準
+MONITOR_MAX_MISSING = int(_mon.get("max_missing_minutes") or 1440)  # 少了幾分鐘以上算資料量不足（預設一天）
 MONITOR_NOTE    = "[監控]"  # 備註中監控的行以此開頭，重跑時先移除再寫
 
 # Excel 被別人開著（鎖住）時：每 retry_seconds 秒重試，最多等 max_wait_minutes 分鐘（0 = 不等）
@@ -322,6 +336,29 @@ def find_host_rows(ws):
     return rows
 
 
+def load_server_list(week):
+    """eventlog.server_list → {伺服器(大寫)}；沒設定 → (None, None)；讀不到 → (None, 警告訊息)
+    格式同 EventLogCheck.ps1：一行一台，空白行與 # 開頭略過"""
+    if not SERVER_LIST:
+        return None, None
+    path = week_path(SERVER_LIST, week)
+    for enc in ("utf-8-sig", "cp950"):
+        try:
+            with open(path, encoding=enc) as f:
+                lines = [ln.strip() for ln in f]
+            break
+        except UnicodeDecodeError:
+            continue
+        except OSError as e:
+            return None, f"cannot read server list {path} ({e.strerror or e}), not checked against it"
+    else:
+        return None, f"cannot read server list {path} (unknown encoding), not checked against it"
+    hosts = {ln.upper() for ln in lines if ln and not ln.startswith("#")}
+    if not hosts:
+        return None, f"server list {path} is empty, not checked against it"
+    return hosts, None
+
+
 def check_csv(df, ignore_ids):
     """回傳 (有警告, 有錯誤, 備註文字)；df 已只含錯誤/警告，只計算不在可忽略清單的事件"""
     for col in (CSV_ID_COLUMN, CSV_LEVEL_COLUMN, CSV_DESC_COLUMN):
@@ -382,22 +419,34 @@ def set_link(cell, host, week):
                          underline="single", color="FF0563C1")
 
 
-def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week, failed=None):
+def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week, failed=None, listed=None):
     """範本模式：沒有本週 CSV 的伺服器填 O O、防毒填 O、連結改成本週
     failed = {伺服器(大寫): 原因}：log 記錄撈取失敗的伺服器，事件兩欄留空白、備註寫原因（不填 O O）
-    回傳 (沒有 CSV 而填 O O 的伺服器, 撈取失敗而留空白的伺服器)"""
-    no_csv, failed_rows = [], []
+    listed = {伺服器(大寫)}：server list；不在清單又沒有 CSV 的伺服器沒撈過，事件兩欄留空白、備註說明
+    回傳 (沒有 CSV 而填 O O 的伺服器, 撈取失敗而留空白的伺服器, 不在 server list 而留空白的伺服器)"""
+    no_csv, failed_rows, unlisted = [], [], []
     failed = failed or {}
+
+    def leave_blank(r, note):
+        set_cell(ws, r, cols[WARN_HEADER], None)
+        set_cell(ws, r, cols[ERROR_HEADER], None)
+        if set_cell(ws, r, cols[NOTE_HEADER], note):
+            ws.cell(row=r, column=cols[NOTE_HEADER]).alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
+
     for name, r in sorted(host_rows.items(), key=lambda x: x[1]):
         host = str(ws.cell(row=r, column=1).value).strip()
         if not HOSTNAME_RE.match(host):
             continue  # 分隔列等非伺服器名稱
-        if r not in filled_rows and host.upper() in failed:
-            set_cell(ws, r, cols[WARN_HEADER], None)
-            set_cell(ws, r, cols[ERROR_HEADER], None)
-            if set_cell(ws, r, cols[NOTE_HEADER], f"{EVENT_NOTE} 撈取失敗：{failed[host.upper()]}"):
-                ws.cell(row=r, column=cols[NOTE_HEADER]).alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
+        # 事件兩欄都有底色 = 這台不檢查事件，不寫撈取失敗 / 不在清單的備註
+        events_checked = not all(is_shaded(ws.cell(row=r, column=cols[h])) for h in (WARN_HEADER, ERROR_HEADER))
+        if r not in filled_rows and not events_checked:
+            pass
+        elif r not in filled_rows and host.upper() in failed:
+            leave_blank(r, f"{EVENT_NOTE} 撈取失敗：{failed[host.upper()]}")
             failed_rows.append(host)
+        elif r not in filled_rows and listed is not None and host.upper() not in listed:
+            leave_blank(r, f"{EVENT_NOTE} 不在 server list，未撈取")
+            unlisted.append(host)
         elif r not in filled_rows:
             wrote = set_cell(ws, r, cols[WARN_HEADER], "O")
             wrote = set_cell(ws, r, cols[ERROR_HEADER], "O") or wrote
@@ -420,7 +469,7 @@ def finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week, failed=None):
                     cell.hyperlink.target = update_week_tokens(cell.hyperlink.target, week)
                 if cell.hyperlink.display:
                     cell.hyperlink.display = update_week_tokens(cell.hyperlink.display, week)
-    return no_csv, failed_rows
+    return no_csv, failed_rows, unlisted
 
 
 # ---------- 撈取失敗（讀每日 log）----------
@@ -512,12 +561,16 @@ def plan_monitor(week, marks, problems):
         print(f"\n[WARN] Monitor CSV folder not found: {csv_dir} - monitor columns cleared")
         problems.append(("monitor", f"WARN: monitor CSV folder not found ({csv_dir}), monitor columns cleared"))
         return clear_monitor(marks)
-    hosts = mc.analyze_folder(csv_dir, mc.trend_config(MONITOR_TREND), MONITOR_X_MINUTES)
+    hosts = mc.analyze_folder(csv_dir, mc.trend_config(MONITOR_TREND), MONITOR_X_MINUTES,
+                              MONITOR_DAYS, MONITOR_MAX_MISSING)
     print(f"\nMonitor CSV folder: {csv_dir} ({len(hosts)} files)")
     for host, h in hosts.items():
         if h.get("error"):
             print(f"  [WARN] {host}: {h['error']}")
             problems.append((f"monitor {host}", f"WARN: {h['error']}"))
+        elif h.get("low_data"):
+            print(f"  [WARN] {host}: {mc.volume_text(h['low_data'])}")
+            problems.append((f"monitor {host}", f"WARN: {mc.volume_text(h['low_data'])}"))
     plan = {}
     for host, heads in sorted(marks.items()):
         res = {r["metric"]: r for r in hosts.get(host, {}).get("rows", [])}
@@ -533,6 +586,9 @@ def plan_monitor(week, marks, problems):
             note = mc.note_text(r, head)
             if note:
                 notes.append(note)
+        low = hosts.get(host, {}).get("low_data")
+        if low and any(v is not None for v in values.values()):
+            notes.append(mc.volume_note(low))  # O/X 照填，備註提醒這週資料不完整
         plan[host] = (values, notes)
         print(f"  {host}: " + " ".join(f"{h}={v or '-'}" for h, v in values.items()))
         for n in notes:
@@ -856,6 +912,14 @@ def main():
         for h, why in failed_hosts.items():
             print(f"  {h}: {why}")
 
+    # ---- 1a'. server list：範本中不在清單的伺服器沒撈過；清單中的伺服器檢核表找不到也要提醒 ----
+    listed, list_warn = load_server_list(week)
+    if list_warn:
+        print(f"\n[WARN] {list_warn}")
+        problems.append(("server list", f"WARN: {list_warn}"))
+    elif listed is not None:
+        print(f"\nServer list: {week_path(SERVER_LIST, week)} ({len(listed)} servers)")
+
     # ---- 1b. 監控數據：依範本打 O 的格子算出 O/X 與備註 ----
     monitor = None
     if MONITOR_CSV_DIR:
@@ -886,14 +950,19 @@ def main():
                 write_check_row(ws, cols, r, *res["check"])
                 filled_rows.add(r)
         build_check.missing = missing
+        build_check.not_in_sheet = sorted(h for h in (listed or ()) if h not in host_rows)
         if template_mode:
-            no_csv, failed_rows = finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week, failed_hosts)
+            no_csv, failed_rows, unlisted = finalize_weekly_sheet(ws, cols, host_rows, filled_rows, week,
+                                                                  failed_hosts, listed)
             print(f"Check sheet: antivirus = O, links updated to {week}")
             if no_csv:
                 print(f"Servers without a {week} CSV, event columns set to O O: {', '.join(no_csv)}")
             if failed_rows:
                 print(f"Servers whose event log collection failed, event columns left blank: {', '.join(failed_rows)}")
+            if unlisted:
+                print(f"Servers not in the server list (never collected), event columns left blank: {', '.join(unlisted)}")
             build_check.failed_rows = failed_rows
+            build_check.unlisted = unlisted
         if monitor is not None:
             write_monitor(ws, host_rows, monitor, cols[NOTE_HEADER])
         return wb
@@ -904,6 +973,13 @@ def main():
         problems.append((fname, "SKIP: server not in check sheet, O/X not filled (tracking sheet still pasted)"))
     for h in getattr(build_check, "failed_rows", []):
         problems.append((h, f"WARN: event log collection failed ({failed_hosts[h.upper()]}), event columns left blank"))
+    for h in getattr(build_check, "unlisted", []):
+        problems.append((h, "WARN: in check sheet but not in server list (never collected), event columns left blank"))
+    skipped = {r["host"].upper() for r in results if r["fname"] in getattr(build_check, "missing", [])}
+    for h in getattr(build_check, "not_in_sheet", []):
+        if h not in skipped:   # 有 CSV 的已在上面 [SKIP] 提醒
+            print(f"  [WARN] {h}: in server list but not found in first column of check sheet")
+            problems.append((h, "WARN: in server list but not in check sheet (check the server name)"))
 
     # ---- 3. 追蹤表：同樣等沒人開著再寫 ----
     def build_track():

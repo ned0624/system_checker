@@ -19,6 +19,8 @@ CSV 格式（檔名 = 主機名稱，例: D:/SystemCheck/2026-W45/P3-WFA-AP01V.c
    整段升幅 ≥ spec × min_rise_pct_of_spec%，且過程中從最高點回落 ≤ spec × max_drop_pct_of_spec%，
    而且最後沒有降下來：最後 edge_minutes 分鐘平均 − 最前 edge_minutes 分鐘平均（預設 60）也要 ≥ spec × min_rise_pct_of_spec%
    （沒有 spec 時以第一段平均為基準）；判定上升時估算照目前速度約幾小時後達 spec
+3. 資料量：有數值的分鐘數比 monitor.days 天（預設 7，每分鐘一筆）少了 monitor.max_missing_minutes 分鐘以上
+   （預設 1440 = 少一天以上）→ [WARN] low data，並列出最長中斷的時段（通常是主機或監控 agent 停了一段時間）
 fill_check 也 import 本程式（analyze_folder / note_text），把結果填進檢核表的 CPU/Memory/... 欄與備註
 
 輸出:
@@ -33,6 +35,8 @@ fill_check 也 import 本程式（analyze_folder / note_text），把結果填�
                                      路徑可用 {week}/{yyyy}/{yy}/{ww}（今天的 ISO 週，例: W2645 / 2026 / 26 / 45）
                                      Kettle 週資料夾 D:/SystemCheck/2026-W45 → D:/SystemCheck/{yyyy}-W{ww}
                                      相對路徑以設定檔所在資料夾為基準
+    monitor.days                     Kettle 撈幾天（預設 7），資料量檢查的基準
+    monitor.max_missing_minutes      資料少了幾分鐘以上算資料量不足（預設 1440 = 一天）
     monitor.trend                    持續上升門檻（null = 下列預設）:
     trend.bucket_minutes             幾分鐘取一次平均（預設 1440 = 每天）
     trend.min_buckets                至少幾段才判定上升（預設 3）
@@ -55,9 +59,11 @@ DEFAULT_COLUMNS = ["time_min", "cpu", "memory", "swap", "disk1", "disk2", "disk3
 SPEC_ROW = "upper_spec"
 TIME_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d %H:%M:%S")
 REPORT_HEADER = ["host", "result", "metric", "spec", "max", "max_time", "over_count", "over_first", "over_last",
-                 "longest_over_min", "rise", "rising", "hours_to_spec"]
+                 "longest_over_min", "rise", "rising", "hours_to_spec", "low_data"]
 # 持續上升判定預設：每天平均（Kettle 撈 7 天），至少 3 天才判定；fill_check 也用這組
 X_OVER_MINUTES = 5  # 連續超過 spec 幾分鐘以上才算 OVER SPEC（config.json 的 monitor.x_over_minutes，fill_check 填 X 也用這個）
+DAYS = 7                     # Kettle 撈幾天（config.json 的 monitor.days），每分鐘一筆 → 應有 DAYS × 1440 筆
+MAX_MISSING_MINUTES = 1440   # 少了幾分鐘以上算資料量不足（monitor.max_missing_minutes，預設一天）
 DEFAULT_TREND = {"bucket_minutes": 1440, "min_buckets": 3, "min_rise_pct_of_spec": 5, "max_drop_pct_of_spec": 1,
                  "edge_minutes": 60}
 
@@ -101,7 +107,8 @@ def load_settings():
                 mon = cfg["monitor"]
                 return path, {"csv_dir": mon.get("csv_dir"), "report_dir": mon.get("report_dir"),
                               "log_dir": cfg.get("log_dir"), "trend": mon.get("trend"),
-                              "x_over_minutes": mon.get("x_over_minutes")}, None
+                              "x_over_minutes": mon.get("x_over_minutes"), "days": mon.get("days"),
+                              "max_missing_minutes": mon.get("max_missing_minutes")}, None
     legacy = os.path.join(APP_DIR, LEGACY_CONFIG)
     if os.path.isfile(legacy):
         with open(legacy, encoding="utf-8-sig") as f:
@@ -294,9 +301,45 @@ def trend_config(cfg_trend):
     return trend
 
 
-def analyze_folder(csv_dir, trend, x_minutes=X_OVER_MINUTES):
-    """資料夾內每台主機 → {HOST: dict(rows=每個指標的結果, n, first, last, skipped) 或 dict(error=說明)}
-    只有時間沒有數值的主機 rows 全是 NO DATA，另外帶 error=NO_VALUES"""
+def check_volume(data, days=DAYS, max_missing=MAX_MISSING_MINUTES):
+    """資料量檢查：有數值的分鐘數比 days 天（每分鐘一筆）少了 max_missing 分鐘以上 → dict，否則 None
+    dict(minutes=有資料的分鐘數, expected, missing, gap=最長中斷分鐘數, gap_from, gap_to)"""
+    times = sorted({t.replace(second=0, microsecond=0) for t, v in data if any(x is not None for x in v.values())})
+    expected = int(days * 1440)
+    missing = expected - len(times)
+    if not times or missing < max_missing:
+        return None
+    gap, gap_from, gap_to = 0, None, None
+    for a, b in zip(times, times[1:]):
+        g = int((b - a).total_seconds() // 60) - 1
+        if g > gap:
+            gap, gap_from, gap_to = g, a, b
+    return {"minutes": len(times), "expected": expected, "missing": missing, "days": days,
+            "gap": gap, "gap_from": gap_from, "gap_to": gap_to}
+
+
+def volume_text(v):
+    """資料量不足的英文說明（畫面 / log / 報表）"""
+    s = (f"low data: {v['minutes']} of {v['expected']} minutes ({v['minutes'] / 1440:.1f} of {v['days']:g} days, "
+         f"missing {v['missing'] / 1440:.1f} days)")
+    if v["gap"] >= 60:
+        s += f", longest gap {v['gap'] / 60:.1f} h ({fmt(v['gap_from'])} ~ {fmt(v['gap_to'])})"
+    return s
+
+
+def volume_note(v):
+    """資料量不足的檢核表備註（中文）"""
+    s = (f"[監控] 資料量不足：只有 {v['minutes'] / 1440:.1f} 天（應有 {v['days']:g} 天，"
+         f"少 {v['missing'] / 1440:.1f} 天）")
+    if v["gap"] >= 60:
+        s += f"，最長中斷 {v['gap'] / 60:.1f} 小時（{v['gap_from']:%m/%d %H:%M} ~ {v['gap_to']:%m/%d %H:%M}）"
+    return s
+
+
+def analyze_folder(csv_dir, trend, x_minutes=X_OVER_MINUTES, days=DAYS, max_missing=MAX_MISSING_MINUTES):
+    """資料夾內每台主機 → {HOST: dict(rows=每個指標的結果, n, first, last, skipped, low_data) 或 dict(error=說明)}
+    只有時間沒有數值的主機 rows 全是 NO DATA，另外帶 error=NO_VALUES
+    low_data：資料量比 days 天少了 max_missing 分鐘以上時為 check_volume 的結果，否則 None"""
     hosts = {}
     for p in sorted(glob.glob(os.path.join(csv_dir, "*.csv"))):
         if p.lower().endswith("_monitor_report.csv"):   # 自己的報表（report_dir 與 csv_dir 同資料夾時）
@@ -308,9 +351,15 @@ def analyze_folder(csv_dir, trend, x_minutes=X_OVER_MINUTES):
             hosts[host] = {"error": f"cannot read {p}: {e}", "rows": []}
             continue
         res = analyze(host, metrics, spec, data, trend, x_minutes)
-        hosts[host] = {"rows": res, "n": len(data), "first": data[0][0], "last": data[-1][0], "skipped": skipped}
+        hosts[host] = {"rows": res, "n": len(data), "first": data[0][0], "last": data[-1][0], "skipped": skipped,
+                       "low_data": None}
         if all(r["result"] == "NO DATA" for r in res):
             hosts[host]["error"] = NO_VALUES  # 通常是 Kettle SQL 的 monitor_item 對不到
+        else:
+            low = check_volume(data, days, max_missing)
+            hosts[host]["low_data"] = low
+            for r in res:
+                r["low_data"] = volume_text(low) if low else None
     return hosts
 
 
@@ -337,7 +386,8 @@ def main(cfg, base, week, csv_dir):
     if not os.path.isdir(csv_dir):
         print(f"[ERROR] CSV folder not found: {csv_dir} (check monitor.csv_dir in config.json)")
         return 1
-    hosts = analyze_folder(csv_dir, trend, int(cfg.get("x_over_minutes") or X_OVER_MINUTES))
+    hosts = analyze_folder(csv_dir, trend, int(cfg.get("x_over_minutes") or X_OVER_MINUTES),
+                           float(cfg.get("days") or DAYS), int(cfg.get("max_missing_minutes") or MAX_MISSING_MINUTES))
     files = len(hosts)
     print(f"CSV folder : {csv_dir} ({files} files)")
     rows, findings, warns = [], [], []
@@ -353,6 +403,9 @@ def main(cfg, base, week, csv_dir):
             continue
         bad = [r for r in h["rows"] if r["result"] not in ("OK", "NO DATA")]
         findings += bad
+        if h.get("low_data"):
+            print(f"  [WARN] {host}: {volume_text(h['low_data'])}")
+            warns.append((host, volume_text(h["low_data"])))
         note = f", skipped {h['skipped']} rows with bad time" if h["skipped"] else ""
         print(f"  {host}: {h['n']} rows {fmt(h['first'])} ~ {fmt(h['last'])}{note}, "
               + (", ".join(f"{r['metric']} {r['result']}" for r in bad) if bad else "OK"))
